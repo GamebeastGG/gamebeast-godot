@@ -1,0 +1,112 @@
+## Project Settings under `gamebeast/`. Registered by the editor plugin (so they show in
+## Project Settings > Gamebeast) and read by the autoload for auto-initialization.
+
+const PREFIX := "gamebeast/"
+
+const API_KEY := PREFIX + "general/api_key"
+const ENVIRONMENT := PREFIX + "general/environment"
+const CUSTOM_ENVIRONMENT := PREFIX + "general/custom_environment"
+const CONFIGURATIONS := PREFIX + "general/configurations"
+const AUTO_INITIALIZE := PREFIX + "general/auto_initialize"
+const CONFIG_REFRESH_INTERVAL := PREFIX + "advanced/config_refresh_interval_sec"
+const SESSION_TIMEOUT := PREFIX + "advanced/session_timeout_sec"
+const DEBUG_LOGGING := PREFIX + "advanced/debug_logging"
+const API_URL := PREFIX + "advanced/api_url"
+
+
+## [name, default, type, hint, hint_string, basic]
+static func definitions() -> Array:
+	return [
+		[API_KEY, "", TYPE_STRING, PROPERTY_HINT_NONE, "", true],
+		[
+			ENVIRONMENT,
+			0,
+			TYPE_INT,
+			PROPERTY_HINT_ENUM,
+			"Auto (editor/debug = development),Production,Development",
+			true
+		],
+		# TODO(post-release): custom environments. Custom environments are coming soon; until
+		# then markers and cohorts (v1 routes) can only address production and development.
+		[
+			CUSTOM_ENVIRONMENT,
+			"",
+			TYPE_STRING,
+			PROPERTY_HINT_PLACEHOLDER_TEXT,
+			"e.g. staging",
+			false
+		],
+		[
+			CONFIGURATIONS,
+			PackedStringArray(),
+			TYPE_PACKED_STRING_ARRAY,
+			PROPERTY_HINT_NONE,
+			"",
+			true
+		],
+		[AUTO_INITIALIZE, true, TYPE_BOOL, PROPERTY_HINT_NONE, "", true],
+		[
+			CONFIG_REFRESH_INTERVAL,
+			60.0,
+			TYPE_FLOAT,
+			PROPERTY_HINT_RANGE,
+			"0,3600,1,suffix:s",
+			false
+		],
+		[SESSION_TIMEOUT, 1800.0, TYPE_FLOAT, PROPERTY_HINT_RANGE, "0,86400,1,suffix:s", false],
+		[DEBUG_LOGGING, false, TYPE_BOOL, PROPERTY_HINT_NONE, "", false],
+		[
+			API_URL,
+			"",
+			TYPE_STRING,
+			PROPERTY_HINT_PLACEHOLDER_TEXT,
+			"https://api.gamebeast.gg",
+			false
+		],
+	]
+
+
+static func register() -> void:
+	for definition in definitions():
+		var name: String = definition[0]
+		if not ProjectSettings.has_setting(name):
+			ProjectSettings.set_setting(name, definition[1])
+		ProjectSettings.set_initial_value(name, definition[1])
+		ProjectSettings.add_property_info(
+			{
+				"name": name,
+				"type": definition[2],
+				"hint": definition[3],
+				"hint_string": definition[4]
+			}
+		)
+		ProjectSettings.set_as_basic(name, definition[5])
+
+
+static func unregister() -> void:
+	for definition in definitions():
+		var name: String = definition[0]
+		# Only remove untouched settings so disabling the plugin never loses a configured key.
+		if ProjectSettings.has_setting(name) and ProjectSettings.get_setting(name) == definition[1]:
+			ProjectSettings.set_setting(name, null)
+
+
+static func auto_initialize_enabled() -> bool:
+	return bool(ProjectSettings.get_setting(AUTO_INITIALIZE, true))
+
+
+static func to_options() -> GamebeastOptions:
+	var options := GamebeastOptions.new()
+	options.api_key = str(ProjectSettings.get_setting(API_KEY, "")).strip_edges()
+	options.environment = int(ProjectSettings.get_setting(ENVIRONMENT, 0))
+	options.custom_environment = str(ProjectSettings.get_setting(CUSTOM_ENVIRONMENT, ""))
+	options.configurations = PackedStringArray(
+		ProjectSettings.get_setting(CONFIGURATIONS, PackedStringArray())
+	)
+	options.config_refresh_interval_sec = float(
+		ProjectSettings.get_setting(CONFIG_REFRESH_INTERVAL, 60.0)
+	)
+	options.session_timeout_sec = float(ProjectSettings.get_setting(SESSION_TIMEOUT, 1800.0))
+	options.debug_logging = bool(ProjectSettings.get_setting(DEBUG_LOGGING, false))
+	options.api_url = str(ProjectSettings.get_setting(API_URL, ""))
+	return options

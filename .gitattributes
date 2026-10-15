@@ -1,0 +1,12 @@
+# Normalize line endings.
+* text=auto eol=lf
+
+# Only the addon ships in the Godot Asset Library / release zip.
+/.github export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/demo export-ignore
+/tests export-ignore
+/export_presets.cfg export-ignore
+/gdlintrc export-ignore
+/project.godot export-ignore

@@ -1,0 +1,23 @@
+; Development project for the Gamebeast Godot SDK: hosts the demo scene and the test suite.
+; Only addons/gamebeast/ ships to users.
+
+config_version=5
+
+[application]
+
+config/name="Gamebeast Godot SDK"
+config/version="0.1.0"
+run/main_scene="res://demo/demo.tscn"
+config/features=PackedStringArray("4.3")
+
+[autoload]
+
+Gamebeast="*res://addons/gamebeast/gamebeast.gd"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/gamebeast/plugin.cfg")
+
+[gamebeast]
+
+general/auto_initialize=false

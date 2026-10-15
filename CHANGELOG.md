@@ -4,8 +4,8 @@
 
 First release.
 
-- `Gamebeast` autoload with `setup`, `identify`, `reset_identity` and `shutdown`. It can also set itself up from Project Settings.
-- Markers: batching, retries with backoff and `retry-after`, saving to disk and replaying on the next launch, Godot type conversion, and a `send_position` helper for heatmaps.
+- `Gamebeast` autoload with `setup`, `identify`, `reset_identity`, `set_user_properties`, `update_settings` and `shutdown`. It can also set itself up from Project Settings.
+- Markers: batching (100 per batch; every 2 s in the editor and debug builds, 10 s in release, both configurable), retries with backoff and `retry-after`, saving unsent markers to disk on quit or backgrounding without double-sending, Godot type conversion, and a `send_position` helper for heatmaps.
 - Remote configurations: typed getters, `observe` / `on_changed` / `on_ready`, hash-based refresh and an on-device cache.
 - Experiments: assignment list with names and group labels from the active experiment catalog.
 - Cohorts: `await is_member(name)` with a 60-second cache.

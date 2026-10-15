@@ -238,7 +238,7 @@ func _tick(delta: float) -> void:
 		for state in _configs.values():
 			if not state.loaded and not state.in_flight:
 				_refresh_state(state)
-	var interval := _context.options.config_refresh_interval_sec
+	var interval := _context.settings.config_refresh_interval_sec
 	if interval <= 0.0:
 		return
 	_since_refresh += delta

@@ -259,7 +259,10 @@ func test_failed_preload_retries_sooner() -> void:
 
 func test_interval_refresh() -> void:
 	transport.default_response = func(_p): return config_response("h", {})
-	var configs := GamebeastConfigs.new(_context(["Game"]))
+	var context := _context(["Game"])
+	context.options.config_refresh_interval_sec = 60.0
+	context.resolve_settings()
+	var configs := GamebeastConfigs.new(context)
 	await configs.refresh()
 	configs._tick(59.0)
 	await settle()

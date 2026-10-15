@@ -10,14 +10,24 @@ const SESSION_PREFIX := "godot-"
 const PRODUCTION := "production"
 const DEVELOPMENT := "development"
 
-# Marker delivery (matches the Unity SDK).
-const MARKER_BATCH_SIZE := 10
-const MARKER_FLUSH_INTERVAL_SEC := 10.0
+# Marker delivery. Batch size and flush interval are settings (see GamebeastOptions).
+const MARKER_DEFAULT_BATCH_SIZE := 100
+const MARKER_MAX_BATCH_SIZE := 500
+## Flush interval when the setting is "auto" (-1): quick in the editor and debug exports so
+## markers show up while testing, like the Roblox SDK's Studio default.
+const MARKER_FLUSH_INTERVAL_DEV_SEC := 2.0
+const MARKER_FLUSH_INTERVAL_RELEASE_SEC := 10.0
+const MARKER_MIN_FLUSH_INTERVAL_SEC := 1.0
+## Browsers cap the combined body size of in-flight keepalive requests at 64 KiB.
+const KEEPALIVE_MAX_BYTES := 60000
 const MARKER_MAX_SEND_ATTEMPTS := 5
 const MARKER_RETRY_BASE_DELAY_SEC := 2.0
 const MARKER_MAX_BUFFERED := 500
 
-# Configurations.
+# Configurations. Refresh interval "auto" (-1) is quick in the editor and debug exports.
+const CONFIG_REFRESH_DEV_SEC := 15.0
+const CONFIG_REFRESH_RELEASE_SEC := 60.0
+const CONFIG_MIN_REFRESH_SEC := 10.0
 const CONFIG_UNLOADED_RETRY_SEC := 10.0
 
 # Cohorts.

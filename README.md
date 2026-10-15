@@ -62,12 +62,19 @@ configs.Connect("configuration_updated", Callable.From<string>(alias => GD.Print
 | `gamebeast/general/custom_environment` | `custom_environment` | | Target an environment by alias. Overrides `environment`. |
 | `gamebeast/general/configurations` | `configurations` | | Configuration aliases to preload. |
 | `gamebeast/general/auto_initialize` | | on | Set up from Project Settings at startup. |
-| `gamebeast/advanced/config_refresh_interval_sec` | `config_refresh_interval_sec` | 60 | Background configuration refresh. 0 disables it. |
+| `gamebeast/advanced/marker_flush_interval_sec` | `marker_flush_interval_sec` | Auto | Seconds between marker sends. Auto is 2 s in the editor and debug exports, 10 s in release. Minimum 1. |
+| `gamebeast/advanced/marker_batch_size` | `marker_batch_size` | 100 | Send a batch as soon as this many markers are waiting. 1 to 500. |
+| `gamebeast/advanced/config_refresh_interval_sec` | `config_refresh_interval_sec` | Auto | Background configuration refresh, which is also how experiment assignment changes reach a running game. Auto is 15 s in the editor and debug exports, 60 s in release. 0 disables it; minimum 10 otherwise. |
 | `gamebeast/advanced/session_timeout_sec` | `session_timeout_sec` | 1800 | Start a new session after the game was backgrounded this long. |
+| `gamebeast/advanced/warnings_enabled` | `warnings_enabled` | on | Warnings for API misuse and failed requests. Errors always print. |
 | `gamebeast/advanced/debug_logging` | `debug_logging` | off | Verbose logs. |
 | `gamebeast/advanced/api_url` | `api_url` | | Override the API base URL. |
 | | `distinct_id` | | Identify the player at startup. |
 | | `user_properties` | | Targeting properties sent with every configuration evaluation. |
+
+Auto intervals give quick feedback while testing (as the Roblox SDK does in Studio) and keep release builds light. Out-of-range values are clamped with a warning.
+
+Change settings at runtime with `Gamebeast.update_settings({...})`: the marker, refresh, session and logging settings above. The key, environment and API URL are fixed at setup.
 
 **Custom environments are coming soon.** You can set `custom_environment` now: configurations and experiments will use it, but markers and cohorts can only target production or development until custom environments ship, and are sent to development.
 
@@ -79,15 +86,19 @@ The SDK identifies the local player by a **distinct id**: the one you supply (in
 - `Gamebeast.reset_identity()`: go back to the anonymous id after logout.
 - `Gamebeast.get_distinct_id()`: the current id. The `identity_changed(distinct_id)` signal fires on every change.
 
+Targeting properties can change mid-session: `Gamebeast.set_user_properties({...})` or `Gamebeast.set_user_property(key, value)` (null removes it) re-evaluates configurations right away, so a player who becomes eligible for a targeted experiment is enrolled without waiting for the next refresh.
+
 `Gamebeast.shutdown()` flushes pending data and tears the SDK down; `setup()` may be called again afterwards.
 
 ## Markers: `Gamebeast.markers`
 
 - `send_marker(type, properties := {})`: send an event. Properties can contain Godot types: `Vector2`, `Vector3`, `Color`, `Quaternion` and friends are sent as arrays.
 - `send_position(type, position, properties := {})`: send an event with a world position for heatmaps. A `Vector3` is sent as `[x, y, z]`; a `Vector2` from a 2D game is sent as `[x, 0, y]`, so it lands on the heatmap's XZ plane.
-- `flush()`: send the current batch now.
+- `flush()`: send everything waiting now.
 
-Markers are batched and sent automatically: when 10 are waiting, every 10 seconds, on quit, and when the game goes to the background. Failed sends retry with exponential backoff (2, 4, 8, 16 s, or longer if the server sends `retry-after`); markers the server rejects are dropped. Anything unsent on quit or backgrounding is saved under `user://` and delivered on the next launch. The backend dedupes by marker id, so nothing is counted twice.
+Markers are batched and sent automatically: when `marker_batch_size` are waiting, every `marker_flush_interval_sec`, and on shutdown. Failed sends retry with exponential backoff (2, 4, 8, 16 s, or longer if the server sends `retry-after`); markers the server rejects are dropped.
+
+The backend does not deduplicate markers, so the SDK keeps each marker in exactly one place: memory, a request, or a file under `user://`. When the game quits or goes to the background, unsent markers move to the file and are sent when the game returns or on the next launch. A request already in flight when the game is killed isn't resent, since it may have arrived. On Web, hiding the page hands what fits in the browser's 64 KiB keepalive budget to requests that outlive the page and saves the rest; markers saved while offline are sent when the browser is back online.
 
 Sessions last one run, and rotate when the game returns from the background after `session_timeout_sec`.
 

@@ -8,8 +8,11 @@ const ENVIRONMENT := PREFIX + "general/environment"
 const CUSTOM_ENVIRONMENT := PREFIX + "general/custom_environment"
 const CONFIGURATIONS := PREFIX + "general/configurations"
 const AUTO_INITIALIZE := PREFIX + "general/auto_initialize"
+const MARKER_FLUSH_INTERVAL := PREFIX + "advanced/marker_flush_interval_sec"
+const MARKER_BATCH_SIZE := PREFIX + "advanced/marker_batch_size"
 const CONFIG_REFRESH_INTERVAL := PREFIX + "advanced/config_refresh_interval_sec"
 const SESSION_TIMEOUT := PREFIX + "advanced/session_timeout_sec"
+const WARNINGS_ENABLED := PREFIX + "advanced/warnings_enabled"
 const DEBUG_LOGGING := PREFIX + "advanced/debug_logging"
 const API_URL := PREFIX + "advanced/api_url"
 
@@ -45,15 +48,20 @@ static func definitions() -> Array:
 			true
 		],
 		[AUTO_INITIALIZE, true, TYPE_BOOL, PROPERTY_HINT_NONE, "", true],
+		# -1 = auto: short in the editor and debug exports, longer in release.
+		[MARKER_FLUSH_INTERVAL, -1.0, TYPE_FLOAT, PROPERTY_HINT_RANGE, "-1,300,1,suffix:s", false],
+		[MARKER_BATCH_SIZE, 100, TYPE_INT, PROPERTY_HINT_RANGE, "1,500,1", false],
+		# -1 = auto, 0 = no background refresh.
 		[
 			CONFIG_REFRESH_INTERVAL,
-			60.0,
+			-1.0,
 			TYPE_FLOAT,
 			PROPERTY_HINT_RANGE,
-			"0,3600,1,suffix:s",
+			"-1,3600,1,suffix:s",
 			false
 		],
 		[SESSION_TIMEOUT, 1800.0, TYPE_FLOAT, PROPERTY_HINT_RANGE, "0,86400,1,suffix:s", false],
+		[WARNINGS_ENABLED, true, TYPE_BOOL, PROPERTY_HINT_NONE, "", false],
 		[DEBUG_LOGGING, false, TYPE_BOOL, PROPERTY_HINT_NONE, "", false],
 		[
 			API_URL,
@@ -103,10 +111,15 @@ static func to_options() -> GamebeastOptions:
 	options.configurations = PackedStringArray(
 		ProjectSettings.get_setting(CONFIGURATIONS, PackedStringArray())
 	)
+	options.marker_flush_interval_sec = float(
+		ProjectSettings.get_setting(MARKER_FLUSH_INTERVAL, -1.0)
+	)
+	options.marker_batch_size = int(ProjectSettings.get_setting(MARKER_BATCH_SIZE, 100))
 	options.config_refresh_interval_sec = float(
-		ProjectSettings.get_setting(CONFIG_REFRESH_INTERVAL, 60.0)
+		ProjectSettings.get_setting(CONFIG_REFRESH_INTERVAL, -1.0)
 	)
 	options.session_timeout_sec = float(ProjectSettings.get_setting(SESSION_TIMEOUT, 1800.0))
+	options.warnings_enabled = bool(ProjectSettings.get_setting(WARNINGS_ENABLED, true))
 	options.debug_logging = bool(ProjectSettings.get_setting(DEBUG_LOGGING, false))
 	options.api_url = str(ProjectSettings.get_setting(API_URL, ""))
 	return options

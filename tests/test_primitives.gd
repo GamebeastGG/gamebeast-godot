@@ -1,5 +1,7 @@
 extends "res://tests/test_case.gd"
 
+const ResolvedSettings := preload("res://addons/gamebeast/internal/resolved_settings.gd")
+
 const Attribution := preload("res://addons/gamebeast/internal/attribution.gd")
 const Constants := preload("res://addons/gamebeast/internal/constants.gd")
 const GbEnvironment := preload("res://addons/gamebeast/internal/environment.gd")
@@ -113,3 +115,23 @@ func test_attribution_ignores_plain_visits_and_foreign_ids() -> void:
 	assert_eq(foreign["utm"]["medium"], "cpc", "utm kept")
 	var long_slug := Attribution.parse("https://game.test/?utm_id=gb_" + "a".repeat(129))
 	assert_false(long_slug.has("deeplinkData"), "slug over 128 chars rejected")
+
+
+func test_resolved_settings_auto_and_clamping() -> void:
+	var options := GamebeastOptions.new()
+	var dev: Variant = ResolvedSettings.resolve(options, true)
+	var release: Variant = ResolvedSettings.resolve(options, false)
+	assert_eq(dev.marker_flush_interval_sec, 2.0, "dev marker interval")
+	assert_eq(release.marker_flush_interval_sec, 10.0, "release marker interval")
+	assert_eq(dev.config_refresh_interval_sec, 15.0, "dev refresh interval")
+	assert_eq(release.config_refresh_interval_sec, 60.0, "release refresh interval")
+	assert_eq(release.marker_batch_size, 100, "default batch size")
+	options.marker_flush_interval_sec = 0.1
+	options.marker_batch_size = 5000
+	options.config_refresh_interval_sec = 0.0
+	var custom: Variant = ResolvedSettings.resolve(options, false)
+	assert_eq(custom.marker_flush_interval_sec, 1.0, "flush interval floor")
+	assert_eq(custom.marker_batch_size, 500, "batch size cap")
+	assert_eq(custom.config_refresh_interval_sec, 0.0, "0 disables refresh")
+	options.config_refresh_interval_sec = 2.0
+	assert_eq(ResolvedSettings.resolve(options, false).config_refresh_interval_sec, 10.0, "floor")

@@ -38,9 +38,16 @@ var marker_flush_interval_sec: float = -1.0
 ## Send a batch as soon as this many markers are waiting. 1-500, default 100.
 var marker_batch_size: int = 100
 
-## Seconds between background re-checks of configurations (and so of experiment assignments,
-## which are evaluated with them). -1 = auto (15 s in the editor and debug exports, 60 s in
-## release). 0 disables background refresh. Minimum 10 otherwise.
+## Seconds between change checks against the environment's status snapshot, a cached request that
+## answers 304 when nothing changed. A changed configuration or experiment is re-evaluated right
+## away. -1 = auto (5 s in the editor and debug exports, 60 s in release). 0 disables it. Minimum 5
+## otherwise. The backend can ask for a longer interval while shedding load; the SDK honours it.
+var status_poll_interval_sec: float = -1.0
+
+## Seconds between full re-evaluations of every configuration, which catch changes the status
+## snapshot can't show: this player's own assignment (a manual pin, a rollout ramp). -1 = auto
+## (15 s in the editor and debug exports; 120 s in release, or 60 s with status polling off). 0
+## disables it. Minimum 10 otherwise.
 var config_refresh_interval_sec: float = -1.0
 
 ## Custom properties describing the player, sent as targeting context with every configuration

@@ -290,3 +290,123 @@ func test_not_found_is_reported() -> void:
 	var configs := GamebeastConfigs.new(_context(["Missing"]))
 	await configs.refresh()
 	assert_false(configs.is_ready(), "missing config never ready")
+
+
+static func status_response(
+	hash: String, config_hashes: Dictionary, experiments: Array = [], polling: Variant = null
+) -> HttpResponse:
+	var configurations: Array = []
+	var id := 1
+	for alias in config_hashes:
+		configurations.append(
+			{"id": id, "name": alias, "alias": alias, "hash": config_hashes[alias]}
+		)
+		id += 1
+	var body := {
+		"hash": hash,
+		"configurations": configurations,
+		"primaryConfigurationId": 1,
+		"experiments": {"user": experiments, "server": []},
+		"requiredProperties": [],
+	}
+	if polling != null:
+		body["polling"] = polling
+	return FakeTransport.json(200, body, {"etag": '"%s"' % hash})
+
+
+func _status_requests() -> Array:
+	return transport.requests_to("/sdk/v2/status")
+
+
+func _status_context() -> Context:
+	transport.default_response = func(_p): return config_response("h", {})
+	var context := _context(["Game", "Other"])
+	context.options.status_poll_interval_sec = 30.0
+	context.options.config_refresh_interval_sec = 0.0
+	context.resolve_settings()
+	return context
+
+
+func test_status_poll_headers_and_304_skips_evaluate() -> void:
+	var snapshots := [
+		status_response("s1", {"Game": "g1", "Other": "o1"}), HttpResponse.of(304, "")
+	]
+	transport.routes["/sdk/v2/status"] = func(_p): return snapshots.pop_front()
+	var configs := GamebeastConfigs.new(_status_context())
+	configs._start()
+	await settle()
+	assert_eq(_evaluate_requests().size(), 2, "startup evaluates both")
+	var first = _status_requests()[0]
+	assert_eq(first.headers["environment"], "development", "environment header")
+	assert_true(first.headers.has("server-id"), "server-id for a per-player rate-limit bucket")
+	assert_false(first.headers.has("if-none-match"), "no etag on first poll")
+	configs._tick(30.5)
+	await settle()
+	assert_eq(_status_requests().size(), 2, "polled again after the interval")
+	assert_eq(_status_requests()[1].headers["if-none-match"], '"s1"', "sends last hash")
+	assert_eq(_evaluate_requests().size(), 2, "unchanged snapshot: no re-evaluation")
+
+
+func test_status_change_re_evaluates_only_changed_config() -> void:
+	var snapshots := [
+		status_response("s1", {"Game": "g1", "Other": "o1"}),
+		status_response("s2", {"Game": "g2", "Other": "o1"}),
+	]
+	transport.routes["/sdk/v2/status"] = func(_p): return snapshots.pop_front()
+	var configs := GamebeastConfigs.new(_status_context())
+	configs._start()
+	await settle()
+	configs._tick(30.5)
+	await settle()
+	var evaluated: Array = _evaluate_requests().map(func(r): return r.json["configuration"])
+	assert_eq(evaluated.size(), 3, "one re-evaluation")
+	assert_eq(evaluated[2], "Game", "the changed configuration")
+
+
+func test_experiment_change_re_evaluates_all_and_reports_catalog() -> void:
+	var experiment := {"id": 7, "name": "Speed", "groups": [{"id": 20, "label": "A"}]}
+	var snapshots := [
+		status_response("s1", {"Game": "g1", "Other": "o1"}),
+		status_response("s2", {"Game": "g1", "Other": "o1"}, [experiment]),
+	]
+	transport.routes["/sdk/v2/status"] = func(_p): return snapshots.pop_front()
+	var configs := GamebeastConfigs.new(_status_context())
+	var catalogs: Array = []
+	configs.catalog_reporter = func(list): catalogs.append(list)
+	configs._start()
+	await settle()
+	configs._tick(30.5)
+	await settle()
+	assert_eq(_evaluate_requests().size(), 4, "new experiment: every configuration re-evaluated")
+	assert_eq(catalogs[-1][0]["name"], "Speed", "descriptors reported for names")
+
+
+func test_status_polling_floor_and_retry_after() -> void:
+	var snapshots := [
+		status_response("s1", {"Game": "g1"}, [], {"intervalSeconds": 300, "jitterRatio": 0.0}),
+		FakeTransport.json(429, {}, {"retry-after": "900"}),
+	]
+	transport.routes["/sdk/v2/status"] = func(_p): return snapshots.pop_front()
+	var configs := GamebeastConfigs.new(_status_context())
+	configs._start()
+	await settle()
+	configs._tick(299.0)
+	await settle()
+	assert_eq(_status_requests().size(), 1, "backend floor of 300s beats the 30s setting")
+	configs._tick(2.0)
+	await settle()
+	assert_eq(_status_requests().size(), 2, "polled at the floor")
+	configs._tick(899.0)
+	await settle()
+	assert_eq(_status_requests().size(), 2, "retry-after honoured")
+
+
+func test_status_disabled_makes_no_requests() -> void:
+	var context := _context(["Game"])
+	context.options.status_poll_interval_sec = 0.0
+	context.resolve_settings()
+	var configs := GamebeastConfigs.new(context)
+	configs._start()
+	configs._tick(1000.0)
+	await settle()
+	assert_eq(_status_requests().size(), 0, "no status polling")

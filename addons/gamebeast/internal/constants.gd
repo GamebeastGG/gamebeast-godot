@@ -24,9 +24,18 @@ const MARKER_MAX_SEND_ATTEMPTS := 5
 const MARKER_RETRY_BASE_DELAY_SEC := 2.0
 const MARKER_MAX_BUFFERED := 500
 
-# Configurations. Refresh interval "auto" (-1) is quick in the editor and debug exports.
+# Change detection. "auto" (-1) intervals are quick in the editor and debug exports, like the
+# Roblox SDK's Studio default (statusPollRate 5 s).
+const STATUS_POLL_DEV_SEC := 5.0
+## Roblox polls every 30 s, but Godot's HTTPRequest opens a new TLS connection per request, so
+## each poll costs a ~5 KB handshake. 60 s until requests reuse a connection.
+const STATUS_POLL_RELEASE_SEC := 60.0
+const STATUS_POLL_MIN_SEC := 5.0
+## Full re-evaluation. With status polling it only has to catch per-player assignment changes, so
+## release builds run it rarely; without status it is the only change detection.
 const CONFIG_REFRESH_DEV_SEC := 15.0
-const CONFIG_REFRESH_RELEASE_SEC := 60.0
+const CONFIG_REFRESH_RELEASE_SEC := 120.0
+const CONFIG_REFRESH_RELEASE_NO_STATUS_SEC := 60.0
 const CONFIG_MIN_REFRESH_SEC := 10.0
 const CONFIG_UNLOADED_RETRY_SEC := 10.0
 

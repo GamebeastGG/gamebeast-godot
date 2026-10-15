@@ -64,7 +64,8 @@ configs.Connect("configuration_updated", Callable.From<string>(alias => GD.Print
 | `gamebeast/general/auto_initialize` | | on | Set up from Project Settings at startup. |
 | `gamebeast/advanced/marker_flush_interval_sec` | `marker_flush_interval_sec` | Auto | Seconds between marker sends. Auto is 2 s in the editor and debug exports, 10 s in release. Minimum 1. |
 | `gamebeast/advanced/marker_batch_size` | `marker_batch_size` | 100 | Send a batch as soon as this many markers are waiting. 1 to 500. |
-| `gamebeast/advanced/config_refresh_interval_sec` | `config_refresh_interval_sec` | Auto | Background configuration refresh, which is also how experiment assignment changes reach a running game. Auto is 15 s in the editor and debug exports, 60 s in release. 0 disables it; minimum 10 otherwise. |
+| `gamebeast/advanced/status_poll_interval_sec` | `status_poll_interval_sec` | Auto | Change checks against the environment's status snapshot (a cached request that answers 304 when nothing changed). Changed configurations and experiments are re-evaluated right away. Auto is 5 s in the editor and debug exports, 60 s in release. 0 disables it; minimum 5 otherwise. |
+| `gamebeast/advanced/config_refresh_interval_sec` | `config_refresh_interval_sec` | Auto | Full re-evaluation of every configuration, which catches changes to this player's own assignment (a manual pin, a rollout ramp) that the status snapshot can't show. Auto is 15 s in the editor and debug exports; 120 s in release, or 60 s with status polling off. 0 disables it; minimum 10 otherwise. |
 | `gamebeast/advanced/session_timeout_sec` | `session_timeout_sec` | 1800 | Start a new session after the game was backgrounded this long. |
 | `gamebeast/advanced/warnings_enabled` | `warnings_enabled` | on | Warnings for API misuse and failed requests. Errors always print. |
 | `gamebeast/advanced/debug_logging` | `debug_logging` | off | Verbose logs. |
@@ -119,7 +120,7 @@ Configurations load on demand: the first read fetches the configuration. Listing
 
 Godot's JSON parser reads every number as a float. `get_int` converts it for you, and `get_value` returns the raw float. Integers above 2^53 lose precision.
 
-Configurations are cached on the device, so values are available instantly at launch (and offline). The cache is tied to your project's `application/config/version`: after a game update, the cached values from the old build are discarded and the SDK waits for fresh ones. Background refresh uses hash-based caching, so unchanged configurations cost almost nothing.
+Configurations are cached on the device, so values are available instantly at launch (and offline). The cache is tied to your project's `application/config/version`: after a game update, the cached values from the old build are discarded and the SDK waits for fresh ones. Change detection polls `GET /sdk/v2/status`, which the backend serves from cache and answers with a 304 when nothing changed. Only configurations whose content changed (or every one, when an experiment changed) are re-evaluated. While the backend is shedding load it can ask SDKs to poll less often; the SDK honours that, and `retry-after`.
 
 ## Experiments: `Gamebeast.experiments`
 

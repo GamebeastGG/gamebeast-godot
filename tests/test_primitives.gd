@@ -124,7 +124,16 @@ func test_resolved_settings_auto_and_clamping() -> void:
 	assert_eq(dev.marker_flush_interval_sec, 2.0, "dev marker interval")
 	assert_eq(release.marker_flush_interval_sec, 10.0, "release marker interval")
 	assert_eq(dev.config_refresh_interval_sec, 15.0, "dev refresh interval")
-	assert_eq(release.config_refresh_interval_sec, 60.0, "release refresh interval")
+	assert_eq(release.config_refresh_interval_sec, 120.0, "release full refresh with status")
+	assert_eq(dev.status_poll_interval_sec, 5.0, "dev status interval")
+	assert_eq(release.status_poll_interval_sec, 60.0, "release status interval")
+	var no_status := GamebeastOptions.new()
+	no_status.status_poll_interval_sec = 0.0
+	assert_eq(
+		ResolvedSettings.resolve(no_status, false).config_refresh_interval_sec,
+		60.0,
+		"faster full refresh without status"
+	)
 	assert_eq(release.marker_batch_size, 100, "default batch size")
 	options.marker_flush_interval_sec = 0.1
 	options.marker_batch_size = 5000

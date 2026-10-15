@@ -10,6 +10,7 @@ const CONFIGURATIONS := PREFIX + "general/configurations"
 const AUTO_INITIALIZE := PREFIX + "general/auto_initialize"
 const MARKER_FLUSH_INTERVAL := PREFIX + "advanced/marker_flush_interval_sec"
 const MARKER_BATCH_SIZE := PREFIX + "advanced/marker_batch_size"
+const STATUS_POLL_INTERVAL := PREFIX + "advanced/status_poll_interval_sec"
 const CONFIG_REFRESH_INTERVAL := PREFIX + "advanced/config_refresh_interval_sec"
 const SESSION_TIMEOUT := PREFIX + "advanced/session_timeout_sec"
 const WARNINGS_ENABLED := PREFIX + "advanced/warnings_enabled"
@@ -51,7 +52,8 @@ static func definitions() -> Array:
 		# -1 = auto: short in the editor and debug exports, longer in release.
 		[MARKER_FLUSH_INTERVAL, -1.0, TYPE_FLOAT, PROPERTY_HINT_RANGE, "-1,300,1,suffix:s", false],
 		[MARKER_BATCH_SIZE, 100, TYPE_INT, PROPERTY_HINT_RANGE, "1,500,1", false],
-		# -1 = auto, 0 = no background refresh.
+		# -1 = auto, 0 = off.
+		[STATUS_POLL_INTERVAL, -1.0, TYPE_FLOAT, PROPERTY_HINT_RANGE, "-1,3600,1,suffix:s", false],
 		[
 			CONFIG_REFRESH_INTERVAL,
 			-1.0,
@@ -115,6 +117,9 @@ static func to_options() -> GamebeastOptions:
 		ProjectSettings.get_setting(MARKER_FLUSH_INTERVAL, -1.0)
 	)
 	options.marker_batch_size = int(ProjectSettings.get_setting(MARKER_BATCH_SIZE, 100))
+	options.status_poll_interval_sec = float(
+		ProjectSettings.get_setting(STATUS_POLL_INTERVAL, -1.0)
+	)
 	options.config_refresh_interval_sec = float(
 		ProjectSettings.get_setting(CONFIG_REFRESH_INTERVAL, -1.0)
 	)

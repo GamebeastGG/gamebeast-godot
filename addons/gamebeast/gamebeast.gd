@@ -33,6 +33,7 @@ const SDK_VERSION := Constants.SDK_VERSION
 const RUNTIME_SETTINGS: Array[String] = [
 	"marker_flush_interval_sec",
 	"marker_batch_size",
+	"status_poll_interval_sec",
 	"config_refresh_interval_sec",
 	"session_timeout_sec",
 	"warnings_enabled",
@@ -177,8 +178,8 @@ func get_user_properties() -> Dictionary:
 
 
 ## Change runtime settings without re-initializing. Accepts a Dictionary with any of
-## marker_flush_interval_sec, marker_batch_size, config_refresh_interval_sec,
-## session_timeout_sec, warnings_enabled and debug_logging. Omitted
+## marker_flush_interval_sec, marker_batch_size, status_poll_interval_sec,
+## config_refresh_interval_sec, session_timeout_sec, warnings_enabled and debug_logging. Omitted
 ## ones keep their value. The API key, environment and URL are fixed at setup (data already loaded
 ## is keyed to them).
 func update_settings(settings: Dictionary) -> void:
@@ -201,6 +202,7 @@ func update_settings(settings: Dictionary) -> void:
 	Log.warnings_enabled = _context.options.warnings_enabled
 	Log.debug_enabled = _context.options.debug_logging
 	_context.resolve_settings()
+	_experiments.catalog_from_status = _context.settings.status_poll_interval_sec > 0.0
 
 
 ## Send pending markers and tear the SDK down. setup() may be called again afterwards.
@@ -275,6 +277,8 @@ func _setup_internal(options: GamebeastOptions, transport: Variant, storage: Sto
 	_experiments = GamebeastExperiments.new(_context)
 	_configs = GamebeastConfigs.new(_context)
 	_configs.assignments_reporter = _experiments._report
+	_configs.catalog_reporter = _experiments._apply_catalog
+	_experiments.catalog_from_status = _context.settings.status_poll_interval_sec > 0.0
 	_cohorts = GamebeastCohorts.new(_context)
 	_attach_web()
 	Log.info(

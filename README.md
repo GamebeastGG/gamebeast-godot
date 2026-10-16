@@ -168,4 +168,6 @@ gdformat --check --line-length 100 addons tests demo && gdlint addons tests demo
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE).
+Gamebeast Community License, the same license as the Roblox SDK. See [LICENSE](LICENSE).
+
+Gamebeast Software is licensed under the Gamebeast Community License, Copyright © Gamebeast Inc. All Rights Reserved.

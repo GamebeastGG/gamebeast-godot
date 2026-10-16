@@ -21,9 +21,9 @@ const API_URL := PREFIX + "advanced/api_url"
 static func definitions() -> Array:
 	return [
 		[API_KEY, "", TYPE_STRING, PROPERTY_HINT_NONE, "", true],
-		# "auto", "production", "development", or any environment alias (typed in).
+		# "auto", "production" or "development".
 		# TODO(post-release): custom environments. Custom environments are coming soon; until
-		# then markers and cohorts (v1 routes) can only address production and development.
+		# then any other value warns at setup and falls back to auto.
 		[
 			ENVIRONMENT,
 			"auto",

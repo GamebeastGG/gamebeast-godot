@@ -3,6 +3,7 @@ extends "res://tests/test_case.gd"
 
 const GamebeastScript := preload("res://addons/gamebeast/gamebeast.gd")
 const ConfigTests := preload("res://tests/test_configs.gd")
+const GbEnvironment := preload("res://addons/gamebeast/internal/environment.gd")
 
 var transport: FakeTransport
 var sdk: Node
@@ -28,6 +29,14 @@ func after_each() -> void:
 
 func _setup(options: Variant) -> void:
 	sdk._setup_internal(sdk._to_options(options), transport, fresh_storage())
+
+
+func test_custom_environment_falls_back_to_auto() -> void:
+	# TODO(post-release): custom environments. Expect "staging" once they ship.
+	_setup({"api_key": "key", "environment": "staging"})
+	assert_true(sdk.is_initialized(), "still initializes")
+	var auto := GbEnvironment.resolve_alias("auto", GbEnvironment.is_dev_runtime())
+	assert_eq(sdk.get_environment(), auto, "falls back to auto")
 
 
 func test_setup_from_dictionary() -> void:

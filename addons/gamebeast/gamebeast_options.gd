@@ -15,10 +15,9 @@ var api_key: String = ""
 var distinct_id: String = ""
 
 ## The Gamebeast environment to report to. "auto" (the default) is development in the editor and
-## debug exports and production in release exports. Any other value is used as the environment's
-## alias: "production", "development", or one your project defines (e.g. "staging").
-## TODO(post-release): custom environments. Coming soon: markers and cohorts can only address
-## production and development until then.
+## debug exports and production in release exports; "production" or "development" pins it.
+## TODO(post-release): custom environments. Coming soon. Until then any other value logs a warning
+## and falls back to auto.
 var environment: String = "auto"
 
 ## Configurations to preload at startup, by alias. Preloaded configurations gate

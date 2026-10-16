@@ -1,12 +1,12 @@
 ## Environment resolution. One setting: "auto" (the default) resolves to development in the editor
-## and debug exports and to production in release exports; any other value is used as the
-## environment alias. Aliases are normalized the way the backend does it (the JS SDK's
-## `normalizeEnvironment`): "Production" and "production" are the same environment, and "studio"
-## means development.
+## and debug exports and to production in release exports; "production" or "development" pins it.
+## Aliases are normalized the way the backend does it (the JS SDK's `normalizeEnvironment`):
+## "Production" and "production" are the same environment, and "studio" means development.
 ##
-## TODO(post-release): custom environments. Custom environments are coming soon. Until then, the
-## v1 routes (markers, cohorts) pick the environment from the `isstudio` boolean and can only
-## address production and development; any other alias is sent to v1 routes as development.
+## TODO(post-release): custom environments. Custom environments are coming soon. Until then any
+## other alias is unsupported: setup warns and falls back to auto. When they ship, pass the alias
+## through to v2 routes; the v1 routes (markers, cohorts) pick the environment from the `isstudio`
+## boolean and can only address production and development.
 
 const Constants := preload("constants.gd")
 
@@ -45,11 +45,11 @@ static func is_dev_runtime() -> bool:
 
 ## The v1 `isstudio` header for an alias: development is `true`, production `false`. This is the
 ## JS SDK's `toLegacyEnvironment`; the Unity SDK sends `false` for development, which lands
-## development markers in production. Unsupported aliases fall back to development.
+## development markers in production.
 static func is_studio(alias: String) -> bool:
 	return alias != Constants.PRODUCTION
 
 
-## Whether the v1 routes can address this alias at all.
-static func supported_by_v1(alias: String) -> bool:
+## Whether the SDK supports this alias: production or development until custom environments ship.
+static func is_supported(alias: String) -> bool:
 	return alias == Constants.PRODUCTION or alias == Constants.DEVELOPMENT

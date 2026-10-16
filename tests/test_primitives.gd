@@ -38,8 +38,10 @@ func test_environment_resolution() -> void:
 func test_isstudio_mapping_matches_js_sdk() -> void:
 	assert_true(GbEnvironment.is_studio("development"), "development -> isstudio true")
 	assert_false(GbEnvironment.is_studio("production"), "production -> isstudio false")
-	assert_true(GbEnvironment.is_studio("staging"), "unsupported -> development")
-	assert_false(GbEnvironment.supported_by_v1("staging"), "custom unsupported on v1")
+	assert_true(GbEnvironment.is_supported("production"), "production supported")
+	assert_true(GbEnvironment.is_supported("development"), "development supported")
+	assert_false(GbEnvironment.is_supported("staging"), "custom environments not yet")
+	assert_false(GbEnvironment.is_supported(""), "invalid alias")
 
 
 func test_api_client_headers() -> void:

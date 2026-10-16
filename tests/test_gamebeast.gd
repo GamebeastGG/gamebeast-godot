@@ -33,13 +33,7 @@ func _setup(options: Variant) -> void:
 func test_setup_from_dictionary() -> void:
 	var initialized := [false]
 	sdk.initialized.connect(func(): initialized[0] = true)
-	_setup(
-		{
-			"api_key": "key",
-			"environment": GamebeastOptions.EnvironmentMode.PRODUCTION,
-			"configurations": ["Game"]
-		}
-	)
+	_setup({"api_key": "key", "environment": "production", "configurations": ["Game"]})
 	assert_true(sdk.is_initialized(), "initialized")
 	assert_true(initialized[0], "signal")
 	assert_eq(sdk.get_environment(), "production", "environment")

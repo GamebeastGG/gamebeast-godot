@@ -252,9 +252,10 @@ func _setup_internal(options: GamebeastOptions, transport: Variant, storage: Sto
 		return
 	Log.debug_enabled = options.debug_logging
 	Log.warnings_enabled = options.warnings_enabled
-	var alias := GbEnvironment.resolve_alias(
-		options.environment, options.custom_environment, GbEnvironment.is_dev_runtime()
-	)
+	var alias := GbEnvironment.resolve_alias(options.environment, GbEnvironment.is_dev_runtime())
+	if alias == "":
+		Log.warn("Environment '%s' isn't a valid alias; using auto." % options.environment)
+		alias = GbEnvironment.resolve_alias(GbEnvironment.AUTO, GbEnvironment.is_dev_runtime())
 	if not GbEnvironment.supported_by_v1(alias):
 		# TODO(post-release): custom environments.
 		(

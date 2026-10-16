@@ -22,14 +22,17 @@ func test_uuid_is_dashed_v4() -> void:
 	assert_eq(seen.size(), 50, "uuids are unique")
 
 
-func test_environment_auto_resolution() -> void:
-	assert_eq(GbEnvironment.resolve_alias(0, "", true), "development", "auto in editor/debug")
-	assert_eq(GbEnvironment.resolve_alias(0, "", false), "production", "auto in release")
-	assert_eq(GbEnvironment.resolve_alias(1, "", true), "production", "explicit production")
-	assert_eq(GbEnvironment.resolve_alias(2, "", false), "development", "explicit development")
-	assert_eq(
-		GbEnvironment.resolve_alias(1, "  staging ", false), "staging", "custom wins, trimmed"
-	)
+func test_environment_resolution() -> void:
+	assert_eq(GbEnvironment.resolve_alias("auto", true), "development", "auto in editor/debug")
+	assert_eq(GbEnvironment.resolve_alias("auto", false), "production", "auto in release")
+	assert_eq(GbEnvironment.resolve_alias("", false), "production", "empty is auto")
+	assert_eq(GbEnvironment.resolve_alias("  ", true), "development", "blank is auto")
+	assert_eq(GbEnvironment.resolve_alias("production", true), "production", "explicit in editor")
+	assert_eq(GbEnvironment.resolve_alias("development", false), "development", "explicit dev")
+	assert_eq(GbEnvironment.resolve_alias("  Staging ", false), "staging", "custom, normalized")
+	assert_eq(GbEnvironment.resolve_alias("Studio", false), "development", "studio synonym")
+	assert_eq(GbEnvironment.resolve_alias("QA env_1", false), "qa-env1", "backend slug rules")
+	assert_eq(GbEnvironment.resolve_alias("!!", false), "", "invalid alias")
 
 
 func test_isstudio_mapping_matches_js_sdk() -> void:

@@ -5,7 +5,6 @@ const PREFIX := "gamebeast/"
 
 const API_KEY := PREFIX + "general/api_key"
 const ENVIRONMENT := PREFIX + "general/environment"
-const CUSTOM_ENVIRONMENT := PREFIX + "general/custom_environment"
 const CONFIGURATIONS := PREFIX + "general/configurations"
 const AUTO_INITIALIZE := PREFIX + "general/auto_initialize"
 const MARKER_FLUSH_INTERVAL := PREFIX + "advanced/marker_flush_interval_sec"
@@ -22,23 +21,16 @@ const API_URL := PREFIX + "advanced/api_url"
 static func definitions() -> Array:
 	return [
 		[API_KEY, "", TYPE_STRING, PROPERTY_HINT_NONE, "", true],
-		[
-			ENVIRONMENT,
-			0,
-			TYPE_INT,
-			PROPERTY_HINT_ENUM,
-			"Auto (editor/debug = development),Production,Development",
-			true
-		],
+		# "auto", "production", "development", or any environment alias (typed in).
 		# TODO(post-release): custom environments. Custom environments are coming soon; until
 		# then markers and cohorts (v1 routes) can only address production and development.
 		[
-			CUSTOM_ENVIRONMENT,
-			"",
+			ENVIRONMENT,
+			"auto",
 			TYPE_STRING,
-			PROPERTY_HINT_PLACEHOLDER_TEXT,
-			"e.g. staging",
-			false
+			PROPERTY_HINT_ENUM_SUGGESTION,
+			"auto,production,development",
+			true
 		],
 		[
 			CONFIGURATIONS,
@@ -108,8 +100,7 @@ static func auto_initialize_enabled() -> bool:
 static func to_options() -> GamebeastOptions:
 	var options := GamebeastOptions.new()
 	options.api_key = str(ProjectSettings.get_setting(API_KEY, "")).strip_edges()
-	options.environment = int(ProjectSettings.get_setting(ENVIRONMENT, 0))
-	options.custom_environment = str(ProjectSettings.get_setting(CUSTOM_ENVIRONMENT, ""))
+	options.environment = str(ProjectSettings.get_setting(ENVIRONMENT, "auto"))
 	options.configurations = PackedStringArray(
 		ProjectSettings.get_setting(CONFIGURATIONS, PackedStringArray())
 	)

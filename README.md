@@ -58,8 +58,7 @@ configs.Connect("configuration_updated", Callable.From<string>(alias => GD.Print
 | Project Setting | Option | Default | |
 | --- | --- | --- | --- |
 | `gamebeast/general/api_key` | `api_key` | | Your SDK key. Required. |
-| `gamebeast/general/environment` | `environment` | Auto | Auto resolves to development in the editor and debug exports, and to production in release exports. |
-| `gamebeast/general/custom_environment` | `custom_environment` | | Target an environment by alias. Overrides `environment`. |
+| `gamebeast/general/environment` | `environment` | `auto` | `auto` resolves to development in the editor and debug exports, and to production in release exports. Any other value is the environment to use: `production`, `development`, or an alias your project defines. |
 | `gamebeast/general/configurations` | `configurations` | | Configuration aliases to preload. |
 | `gamebeast/general/auto_initialize` | | on | Set up from Project Settings at startup. |
 | `gamebeast/advanced/marker_flush_interval_sec` | `marker_flush_interval_sec` | Auto | Seconds between marker sends. Auto is 2 s in the editor and debug exports, 10 s in release. Minimum 1. |
@@ -77,7 +76,7 @@ Auto intervals give quick feedback while testing (as the Roblox SDK does in Stud
 
 Change settings at runtime with `Gamebeast.update_settings({...})`: the marker, refresh, session and logging settings above. The key, environment and API URL are fixed at setup.
 
-**Custom environments are coming soon.** You can set `custom_environment` now: configurations and experiments will use it, but markers and cohorts can only target production or development until custom environments ship, and are sent to development.
+**Custom environments are coming soon.** You can set `environment` to a custom alias now: configurations and experiments will use it, but markers and cohorts can only target production or development until custom environments ship, and are sent to development.
 
 ## User identity
 

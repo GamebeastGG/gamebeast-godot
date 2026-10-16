@@ -7,8 +7,6 @@ extends RefCounted
 ## dashboard edits and markers show up quickly while testing, and a longer one in release exports.
 ## The SDK clamps out-of-range values and warns.
 
-enum EnvironmentMode { AUTO = 0, PRODUCTION = 1, DEVELOPMENT = 2 }
-
 ## Your Gamebeast project SDK key. Required. It is public (it ships in your game build).
 var api_key: String = ""
 
@@ -16,15 +14,12 @@ var api_key: String = ""
 ## first launch and persists it under user://, so the same player is reported across sessions.
 var distinct_id: String = ""
 
-## Which Gamebeast environment to target. AUTO resolves to development in the editor and in debug
-## exports, and to production in release exports.
-var environment: EnvironmentMode = EnvironmentMode.AUTO
-
-## Optional: target an environment by its alias (e.g. "staging"). Takes precedence over
-## [member environment] when set.
+## The Gamebeast environment to report to. "auto" (the default) is development in the editor and
+## debug exports and production in release exports. Any other value is used as the environment's
+## alias: "production", "development", or one your project defines (e.g. "staging").
 ## TODO(post-release): custom environments. Coming soon: markers and cohorts can only address
 ## production and development until then.
-var custom_environment: String = ""
+var environment: String = "auto"
 
 ## Configurations to preload at startup, by alias. Preloaded configurations gate
 ## [signal GamebeastConfigs.configs_ready]. Others are fetched the first time they are read.

@@ -1,28 +1,41 @@
-## Environment resolution. Mirrors the Unity SDK's model: an Auto/Production/Development choice,
-## overridden by a custom environment alias when one is set.
+## Environment resolution. One setting: "auto" (the default) resolves to development in the editor
+## and debug exports and to production in release exports; any other value is used as the
+## environment alias. Aliases are normalized the way the backend does it (the JS SDK's
+## `normalizeEnvironment`): "Production" and "production" are the same environment, and "studio"
+## means development.
 ##
 ## TODO(post-release): custom environments. Custom environments are coming soon. Until then, the
 ## v1 routes (markers, cohorts) pick the environment from the `isstudio` boolean and can only
 ## address production and development; any other alias is sent to v1 routes as development.
 
-enum Mode { AUTO = 0, PRODUCTION = 1, DEVELOPMENT = 2 }
-
 const Constants := preload("constants.gd")
 
+const AUTO := "auto"
 
-## The environment alias sent to v2 routes in the `environment` header.
-static func resolve_alias(mode: int, custom_environment: String, is_dev_runtime: bool) -> String:
-	# TODO(post-release): custom environments. The override is passed through as-is, like Unity.
-	var custom := custom_environment.strip_edges()
-	if custom != "":
-		return custom
-	match mode:
-		Mode.PRODUCTION:
-			return Constants.PRODUCTION
-		Mode.DEVELOPMENT:
-			return Constants.DEVELOPMENT
-		_:
-			return Constants.DEVELOPMENT if is_dev_runtime else Constants.PRODUCTION
+const _SYNONYMS := {"studio": "development"}
+
+
+## The backend's alias slug (`toAliasSlug` in @gamebeast/sdk-contract), plus its synonyms.
+static func normalize(input: String) -> String:
+	var slug := input.to_lower()
+	var spaces := RegEx.create_from_string("\\s+")
+	slug = spaces.sub(slug, "-", true)
+	var invalid := RegEx.create_from_string("[^a-z0-9-]")
+	slug = invalid.sub(slug, "", true)
+	var dashes := RegEx.create_from_string("-+")
+	slug = dashes.sub(slug, "-", true)
+	slug = slug.lstrip("-").rstrip("-")
+	return _SYNONYMS.get(slug, slug)
+
+
+## The environment alias sent to v2 routes in the `environment` header. Empty or "auto" picks
+## development or production from the runtime. Returns "" for a value that normalizes to nothing
+## (e.g. "!!"); the caller warns and falls back to auto.
+static func resolve_alias(environment: String, is_dev_runtime: bool) -> String:
+	var alias := normalize(environment)
+	if environment.strip_edges() == "" or alias == AUTO:
+		return Constants.DEVELOPMENT if is_dev_runtime else Constants.PRODUCTION
+	return alias
 
 
 ## True when running in the editor or a debug export: `Auto` resolves to development there.

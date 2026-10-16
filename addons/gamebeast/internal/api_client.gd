@@ -92,6 +92,41 @@ func evaluate_configuration(
 	return _result(FetchStatus.UPDATED, parsed)
 
 
+## GET /sdk/v2/status: the environment's snapshot without configuration documents. Coroutine.
+## Returns {status, response, error, retry_after}. `server-id` gives this player its own rate-limit
+## bucket; without it, every player behind one IP would share one.
+func get_status(known_hash: String) -> Dictionary:
+	var headers := v2_headers()
+	headers["server-id"] = session_id.left(Constants.MARKER_SERVER_ID_MAX_LENGTH)
+	if known_hash != "":
+		headers["if-none-match"] = '"%s"' % known_hash
+	var response: HttpResponse = await _transport.request(
+		HTTPClient.METHOD_GET, _base_url + "/sdk/v2/status", headers
+	)
+	var result: Dictionary
+	if response.transport_error != "":
+		result = _result(FetchStatus.FAILED, null, response.describe())
+	elif response.is_not_modified():
+		result = _result(FetchStatus.NOT_MODIFIED)
+	else:
+		var parsed: Variant = JsonCodec.parse(response.text())
+		if not response.is_success():
+			result = _result(FetchStatus.FAILED, null, _describe_error(response, parsed))
+		elif (
+			not (parsed is Dictionary)
+			or not (parsed.get("hash") is String)
+			or not (parsed.get("configurations") is Array)
+			or not (parsed.get("experiments") is Dictionary)
+		):
+			result = _result(FetchStatus.FAILED, null, "could not parse status response")
+		elif known_hash != "" and parsed["hash"] == known_hash:
+			result = _result(FetchStatus.NOT_MODIFIED)
+		else:
+			result = _result(FetchStatus.UPDATED, parsed)
+	result["retry_after"] = response.retry_after_sec()
+	return result
+
+
 ## GET /sdk/v2/experiments/active?unit-type=user. Coroutine. Returns {status, response, error}.
 func get_active_experiments(known_hash: String) -> Dictionary:
 	var url := _base_url + "/sdk/v2/experiments/active?unit-type=user"

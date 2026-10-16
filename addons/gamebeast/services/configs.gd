@@ -11,7 +11,13 @@ extends RefCounted
 ##
 ## Configurations load on demand: the first read of an alias fetches it. Aliases listed in the
 ## setup options (or Project Settings) are also preloaded and gate [signal configs_ready]. Every
-## configuration is cached under user:// and refreshed on an interval with hash-based caching.
+## configuration is cached under user://.
+##
+## Change detection polls [code]GET /sdk/v2/status[/code], the environment's snapshot of
+## configuration hashes and experiment definitions. It is cached on the backend and answers 304 when
+## nothing changed, so it is cheap to poll often. Only when it changes are the affected
+## configurations re-evaluated. A slower periodic re-evaluation of everything catches changes the
+## snapshot can't show: one player's own assignment (a manual pin, a rollout ramp).
 ##
 ## Note: Godot's JSON parser reads every number as a float. [method get_int] converts for you;
 ## [method get_value] returns the raw float.
@@ -25,6 +31,7 @@ const ApiClient := preload("../internal/api_client.gd")
 const Constants := preload("../internal/constants.gd")
 const Context := preload("../internal/context.gd")
 const EvaluationContext := preload("../internal/evaluation_context.gd")
+const JsonCodec := preload("../internal/json_codec.gd")
 const Log := preload("../internal/log.gd")
 const Storage := preload("../internal/storage.gd")
 
@@ -65,6 +72,8 @@ class Latch:
 
 ## Called with the assignments echoed on each evaluated response: (alias, experiments Array).
 var assignments_reporter: Callable
+## Called with the user experiment descriptors from each changed status snapshot.
+var catalog_reporter: Callable
 
 var _context: Context
 ## Lowercased alias -> ConfigState
@@ -76,6 +85,22 @@ var _since_refresh := 0.0
 var _since_unloaded_retry := 0.0
 var _identity_generation := 0
 var _stopped := false
+
+# Status polling.
+var _status_hash := ""
+var _status_in_flight := false
+var _status_received := false
+var _since_status := 0.0
+## Wait before the next poll: the setting, raised by the backend's polling floor or retry-after.
+var _status_wait := 0.0
+## Lowercased alias -> base configuration hash from the last snapshot.
+var _base_hashes: Dictionary = {}
+var _experiments_signature := ""
+## Emergency floor from the snapshot's `polling` field (0 = none) and its jitter ratio.
+var _polling_floor := 0.0
+var _polling_jitter := 0.0
+var _status_failing := false
+var _rng := RandomNumberGenerator.new()
 
 
 func _init(context: Context) -> void:
@@ -226,7 +251,9 @@ func get_known_aliases() -> PackedStringArray:
 
 
 func _start() -> void:
+	_status_wait = _context.settings.status_poll_interval_sec
 	refresh()
+	_poll_status()
 
 
 func _tick(delta: float) -> void:
@@ -238,17 +265,92 @@ func _tick(delta: float) -> void:
 		for state in _configs.values():
 			if not state.loaded and not state.in_flight:
 				_refresh_state(state)
-	var interval := _context.options.config_refresh_interval_sec
+	if _context.settings.status_poll_interval_sec > 0.0:
+		_since_status += delta
+		if _since_status >= _status_wait:
+			_poll_status()
+	var interval := _context.settings.config_refresh_interval_sec
 	if interval <= 0.0:
 		return
 	_since_refresh += delta
-	if _since_refresh >= interval:
+	if _since_refresh >= maxf(interval, _polling_floor):
 		refresh()
 
 
 func _on_resumed() -> void:
 	if not _configs.is_empty():
 		refresh()
+		_poll_status()
+
+
+## True when experiment names come from status snapshots rather than /experiments/active.
+func _status_enabled() -> bool:
+	return _context.settings.status_poll_interval_sec > 0.0
+
+
+func _poll_status() -> void:
+	if _stopped or _status_in_flight or not _status_enabled():
+		return
+	_status_in_flight = true
+	_since_status = 0.0
+	var result: Dictionary = await _context.api.get_status(_status_hash)
+	_status_in_flight = false
+	if _stopped:
+		return
+	match result["status"]:
+		ApiClient.FetchStatus.UPDATED:
+			_status_failing = false
+			_apply_status(result["response"])
+		ApiClient.FetchStatus.NOT_MODIFIED:
+			_status_failing = false
+		_:
+			if not _status_failing:
+				Log.warn("Status poll failed (%s); will retry." % result["error"])
+			_status_failing = true
+	_status_wait = _next_status_wait(float(result.get("retry_after", 0.0)))
+
+
+func _next_status_wait(retry_after: float) -> float:
+	var wait := maxf(maxf(_context.settings.status_poll_interval_sec, _polling_floor), retry_after)
+	if _polling_floor > 0.0 and _polling_jitter > 0.0:
+		wait *= _rng.randf_range(1.0 - _polling_jitter, 1.0 + _polling_jitter)
+	return wait
+
+
+## A changed snapshot: re-evaluate configurations whose base content changed, or every one when
+## the experiment definitions changed (an experiment can target any of them).
+func _apply_status(response: Dictionary) -> void:
+	_status_hash = str(response["hash"])
+	var polling: Variant = response.get("polling")
+	if polling is Dictionary:
+		_polling_floor = float(polling.get("intervalSeconds", 0.0))
+		_polling_jitter = clampf(float(polling.get("jitterRatio", 0.0)), 0.0, 1.0)
+		Log.info("Backend asked for polling no faster than every %ds." % int(_polling_floor))
+	else:
+		_polling_floor = 0.0
+		_polling_jitter = 0.0
+	var experiments: Variant = response["experiments"].get("user", [])
+	var user_experiments: Array = experiments if experiments is Array else []
+	if catalog_reporter.is_valid():
+		catalog_reporter.call(user_experiments)
+	var base_hashes := {}
+	for summary in response["configurations"]:
+		if summary is Dictionary and summary.get("alias") is String:
+			base_hashes[summary["alias"].to_lower()] = str(summary.get("hash", ""))
+	var signature := JsonCodec.stringify(user_experiments)
+	var experiments_changed := signature != _experiments_signature
+	var first := not _status_received
+	_status_received = true
+	_experiments_signature = signature
+	var previous := _base_hashes
+	_base_hashes = base_hashes
+	# The first snapshot is the baseline: startup evaluated every configuration already.
+	if first:
+		return
+	for key in _configs:
+		if experiments_changed or base_hashes.get(key) != previous.get(key):
+			Log.info("Configuration '%s' changed upstream; re-evaluating." % _configs[key].alias)
+			_refresh_after_in_flight(_configs[key])
 
 
 ## Evaluated content is per player: discard in-flight responses, drop hashes so every config

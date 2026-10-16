@@ -1,5 +1,7 @@
 extends "res://tests/test_case.gd"
 
+const ResolvedSettings := preload("res://addons/gamebeast/internal/resolved_settings.gd")
+
 const Attribution := preload("res://addons/gamebeast/internal/attribution.gd")
 const Constants := preload("res://addons/gamebeast/internal/constants.gd")
 const GbEnvironment := preload("res://addons/gamebeast/internal/environment.gd")
@@ -20,21 +22,25 @@ func test_uuid_is_dashed_v4() -> void:
 	assert_eq(seen.size(), 50, "uuids are unique")
 
 
-func test_environment_auto_resolution() -> void:
-	assert_eq(GbEnvironment.resolve_alias(0, "", true), "development", "auto in editor/debug")
-	assert_eq(GbEnvironment.resolve_alias(0, "", false), "production", "auto in release")
-	assert_eq(GbEnvironment.resolve_alias(1, "", true), "production", "explicit production")
-	assert_eq(GbEnvironment.resolve_alias(2, "", false), "development", "explicit development")
-	assert_eq(
-		GbEnvironment.resolve_alias(1, "  staging ", false), "staging", "custom wins, trimmed"
-	)
+func test_environment_resolution() -> void:
+	assert_eq(GbEnvironment.resolve_alias("", true), "development", "unset in editor/debug")
+	assert_eq(GbEnvironment.resolve_alias("", false), "production", "unset in release")
+	assert_eq(GbEnvironment.resolve_alias("  ", true), "development", "blank is unset")
+	assert_eq(GbEnvironment.resolve_alias("production", true), "production", "explicit in editor")
+	assert_eq(GbEnvironment.resolve_alias("development", false), "development", "explicit dev")
+	assert_eq(GbEnvironment.resolve_alias("  Staging ", false), "staging", "custom, normalized")
+	assert_eq(GbEnvironment.resolve_alias("Studio", false), "development", "studio synonym")
+	assert_eq(GbEnvironment.resolve_alias("QA env_1", false), "qa-env1", "backend slug rules")
+	assert_eq(GbEnvironment.resolve_alias("!!", false), "", "invalid alias")
 
 
 func test_isstudio_mapping_matches_js_sdk() -> void:
 	assert_true(GbEnvironment.is_studio("development"), "development -> isstudio true")
 	assert_false(GbEnvironment.is_studio("production"), "production -> isstudio false")
-	assert_true(GbEnvironment.is_studio("staging"), "unsupported -> development")
-	assert_false(GbEnvironment.supported_by_v1("staging"), "custom unsupported on v1")
+	assert_true(GbEnvironment.is_supported("production"), "production supported")
+	assert_true(GbEnvironment.is_supported("development"), "development supported")
+	assert_false(GbEnvironment.is_supported("staging"), "custom environments not yet")
+	assert_false(GbEnvironment.is_supported(""), "invalid alias")
 
 
 func test_api_client_headers() -> void:
@@ -113,3 +119,32 @@ func test_attribution_ignores_plain_visits_and_foreign_ids() -> void:
 	assert_eq(foreign["utm"]["medium"], "cpc", "utm kept")
 	var long_slug := Attribution.parse("https://game.test/?utm_id=gb_" + "a".repeat(129))
 	assert_false(long_slug.has("deeplinkData"), "slug over 128 chars rejected")
+
+
+func test_resolved_settings_auto_and_clamping() -> void:
+	var options := GamebeastOptions.new()
+	var dev: Variant = ResolvedSettings.resolve(options, true)
+	var release: Variant = ResolvedSettings.resolve(options, false)
+	assert_eq(dev.marker_flush_interval_sec, 2.0, "dev marker interval")
+	assert_eq(release.marker_flush_interval_sec, 10.0, "release marker interval")
+	assert_eq(dev.config_refresh_interval_sec, 15.0, "dev refresh interval")
+	assert_eq(release.config_refresh_interval_sec, 120.0, "release full refresh with status")
+	assert_eq(dev.status_poll_interval_sec, 5.0, "dev status interval")
+	assert_eq(release.status_poll_interval_sec, 60.0, "release status interval")
+	var no_status := GamebeastOptions.new()
+	no_status.status_poll_interval_sec = 0.0
+	assert_eq(
+		ResolvedSettings.resolve(no_status, false).config_refresh_interval_sec,
+		60.0,
+		"faster full refresh without status"
+	)
+	assert_eq(release.marker_batch_size, 100, "default batch size")
+	options.marker_flush_interval_sec = 0.1
+	options.marker_batch_size = 5000
+	options.config_refresh_interval_sec = 0.0
+	var custom: Variant = ResolvedSettings.resolve(options, false)
+	assert_eq(custom.marker_flush_interval_sec, 1.0, "flush interval floor")
+	assert_eq(custom.marker_batch_size, 500, "batch size cap")
+	assert_eq(custom.config_refresh_interval_sec, 0.0, "0 disables refresh")
+	options.config_refresh_interval_sec = 2.0
+	assert_eq(ResolvedSettings.resolve(options, false).config_refresh_interval_sec, 10.0, "floor")

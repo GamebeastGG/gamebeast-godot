@@ -3,6 +3,7 @@ extends "res://tests/test_case.gd"
 
 const GamebeastScript := preload("res://addons/gamebeast/gamebeast.gd")
 const ConfigTests := preload("res://tests/test_configs.gd")
+const GbEnvironment := preload("res://addons/gamebeast/internal/environment.gd")
 
 var transport: FakeTransport
 var sdk: Node
@@ -30,16 +31,18 @@ func _setup(options: Variant) -> void:
 	sdk._setup_internal(sdk._to_options(options), transport, fresh_storage())
 
 
+func test_custom_environment_resolves_as_unset() -> void:
+	# TODO(post-release): custom environments. Expect "staging" once they ship.
+	_setup({"api_key": "key", "environment": "staging"})
+	assert_true(sdk.is_initialized(), "still initializes")
+	var resolved := GbEnvironment.runtime_default(GbEnvironment.is_dev_runtime())
+	assert_eq(sdk.get_environment(), resolved, "resolved as if unset")
+
+
 func test_setup_from_dictionary() -> void:
 	var initialized := [false]
 	sdk.initialized.connect(func(): initialized[0] = true)
-	_setup(
-		{
-			"api_key": "key",
-			"environment": GamebeastOptions.EnvironmentMode.PRODUCTION,
-			"configurations": ["Game"]
-		}
-	)
+	_setup({"api_key": "key", "environment": "production", "configurations": ["Game"]})
 	assert_true(sdk.is_initialized(), "initialized")
 	assert_true(initialized[0], "signal")
 	assert_eq(sdk.get_environment(), "production", "environment")
@@ -80,7 +83,7 @@ func test_identify_and_reset() -> void:
 	assert_eq(changes, ["player-9", anonymous], "identity_changed emitted per change")
 
 
-func test_shutdown_persists_and_allows_setup_again() -> void:
+func test_shutdown_flushes_and_allows_setup_again() -> void:
 	transport.manual = true
 	_setup("key")
 	sdk.markers.send_marker("quit")
@@ -115,3 +118,30 @@ func test_session_rotates_after_background_timeout() -> void:
 func test_unknown_dictionary_options_are_ignored() -> void:
 	_setup({"api_key": "key", "nope": 1})
 	assert_true(sdk.is_initialized(), "still initializes")
+
+
+func test_update_settings_changes_runtime_values() -> void:
+	_setup("key")
+	sdk.update_settings({"marker_batch_size": 2, "api_key": "other"})
+	assert_eq(sdk._context.settings.marker_batch_size, 2, "batch size applied")
+	assert_eq(sdk._context.options.api_key, "key", "setup-only setting refused")
+	sdk.markers.send_marker("a")
+	sdk.markers.send_marker("b")
+	await settle()
+	assert_eq(transport.requests_to("/sdk/v1/markers").size(), 1, "new batch size used")
+
+
+func test_set_user_properties_re_evaluates() -> void:
+	_setup({"api_key": "key", "configurations": ["Game"]})
+	await settle()
+	var before := transport.requests_to("/sdk/v2/configurations/evaluate").size()
+	sdk.set_user_property("vip", true)
+	await settle()
+	var evaluations := transport.requests_to("/sdk/v2/configurations/evaluate")
+	assert_eq(evaluations.size(), before + 1, "re-evaluated")
+	assert_eq(evaluations[-1].json["context"]["properties"]["vip"], true, "property sent")
+	sdk.set_user_property("vip", true)
+	await settle()
+	assert_eq(
+		transport.requests_to("/sdk/v2/configurations/evaluate").size(), before + 1, "no-op skipped"
+	)

@@ -6,7 +6,8 @@ extends RefCounted
 ## Enrollment is automatic: evaluating a configuration evaluates active experiments for this player
 ## on the backend, and the applied assignments surface here. There is nothing to opt into; this
 ## service exists for display, analytics segmentation and debugging. Names and group labels come
-## from the active experiment catalog, fetched lazily when an unknown experiment appears.
+## from the status snapshots the configs service polls. With status polling off, they are fetched
+## from the active experiment catalog when an unknown experiment appears.
 
 ## Emitted with the full assignment list whenever it changes (including when names resolve).
 signal assignments_changed(assignments: Array[GamebeastExperimentAssignment])
@@ -15,10 +16,13 @@ const ApiClient := preload("../internal/api_client.gd")
 const Context := preload("../internal/context.gd")
 const Log := preload("../internal/log.gd")
 
+## Set by the autoload: status snapshots supply the catalog, so /experiments/active isn't needed.
+var catalog_from_status := false
+
 var _context: Context
 ## alias -> Array of assignment metadata dictionaries from the evaluate response
 var _by_config: Dictionary = {}
-## experiment id -> experiment dictionary from /experiments/active
+## experiment id -> experiment descriptor (from /status, or /experiments/active as a fallback)
 var _catalog: Dictionary = {}
 var _catalog_hash := ""
 var _catalog_in_flight := false
@@ -55,6 +59,19 @@ func _report(alias: String, experiments: Array) -> void:
 	_rebuild()
 
 
+## Called by GamebeastConfigs with the user experiment descriptors from a changed snapshot.
+func _apply_catalog(descriptors: Array) -> void:
+	var catalog := {}
+	for experiment in descriptors:
+		if experiment is Dictionary:
+			catalog[int(experiment.get("id", 0))] = experiment
+	if catalog == _catalog:
+		return
+	_catalog = catalog
+	if not _by_config.is_empty():
+		_rebuild()
+
+
 func _on_identity_changed() -> void:
 	if _by_config.is_empty():
 		return
@@ -63,10 +80,33 @@ func _on_identity_changed() -> void:
 
 
 func _rebuild() -> void:
-	if _has_unknown_experiment():
+	# With status polling, an experiment missing from the catalog shows up in the next snapshot,
+	# which fills in its name and emits again.
+	if not catalog_from_status and _has_unknown_experiment():
 		await _refresh_catalog()
-	_current = _build_snapshot()
+	var snapshot := _build_snapshot()
+	if _same(snapshot, _current) and not _current.is_empty():
+		return
+	_current = snapshot
 	assignments_changed.emit(_current.duplicate())
+
+
+static func _same(
+	a: Array[GamebeastExperimentAssignment], b: Array[GamebeastExperimentAssignment]
+) -> bool:
+	if a.size() != b.size():
+		return false
+	for i in a.size():
+		if (
+			a[i].experiment_id != b[i].experiment_id
+			or a[i].group_id != b[i].group_id
+			or a[i].experiment_name != b[i].experiment_name
+			or a[i].group_label != b[i].group_label
+			or a[i].configuration_alias != b[i].configuration_alias
+			or a[i].source != b[i].source
+		):
+			return false
+	return true
 
 
 func _has_unknown_experiment() -> bool:

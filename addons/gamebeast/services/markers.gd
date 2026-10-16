@@ -3,11 +3,16 @@ extends RefCounted
 ## Sends engagement markers (analytics events) to Gamebeast. Access through
 ## [code]Gamebeast.markers[/code].
 ##
-## Markers are batched and flushed automatically: when a batch of 10 fills up, every 10 seconds,
-## and when the game quits or goes to the background. Failed sends retry with exponential backoff
-## (honouring [code]retry-after[/code]); permanent rejections (4xx) are dropped. Anything still
-## unsent when the game quits or is backgrounded is persisted under user:// and delivered on the
-## next launch. The backend dedupes markers by id, so a replay never double-counts.
+## Markers are batched: a batch is sent once [member GamebeastOptions.marker_batch_size] markers
+## are waiting (default 100) or every [member GamebeastOptions.marker_flush_interval_sec] (2 s in
+## the editor and debug exports, 10 s in release). Failed sends retry with exponential backoff
+## (honouring [code]retry-after[/code]); permanent rejections (4xx) are dropped.
+##
+## The backend does not deduplicate markers, so a marker lives in exactly one place at a time:
+## memory, an in-flight request, or the user:// file. When the game quits or goes to the
+## background, unsent markers move to the file; they are claimed back (read and cleared) and sent
+## when the game returns or on the next launch. A request still in flight when the process is
+## killed is not resent: it may have arrived, and resending could count it twice.
 
 const Constants := preload("../internal/constants.gd")
 const Context := preload("../internal/context.gd")
@@ -17,20 +22,26 @@ const Log := preload("../internal/log.gd")
 const Storage := preload("../internal/storage.gd")
 const Uuid := preload("../internal/uuid.gd")
 
+## {"markers":[]} around a batch.
+const BATCH_WRAPPER_BYTES := 14
+
 var _context: Context
 var _pending: Array = []
 ## Failed batches awaiting resend: {"markers": Array, "attempt": int, "wait": float}
 var _retries: Array = []
-## Batches currently being sent, by batch id. Included in persisted snapshots.
+## Batches currently being sent, by batch id.
 var _in_flight: Dictionary = {}
 var _next_batch_id := 0
 var _since_flush := 0.0
 var _stopped := false
+## Process frame at which unsent markers were parked on disk, or -1. If the game is still running
+## a few frames later (a cancelled quit), they are claimed back.
+var _parked_frame := -1
 
 
 func _init(context: Context) -> void:
 	_context = context
-	_restore_persisted()
+	_claim_parked()
 
 
 ## Send a marker attributed to the local player. [param properties] is a Dictionary of
@@ -57,7 +68,7 @@ func send_marker(marker_type: String, properties: Dictionary = {}) -> void:
 		marker["deeplinkData"] = _context.attribution["deeplinkData"]
 	_pending.append(marker)
 	_enforce_cap()
-	if _pending.size() >= Constants.MARKER_BATCH_SIZE:
+	if _pending.size() >= _context.settings.marker_batch_size:
 		flush()
 
 
@@ -79,23 +90,19 @@ func send_position(marker_type: String, position: Variant, properties: Dictionar
 	send_marker(marker_type, with_position)
 
 
-## Send everything waiting in the current batch now.
+## Send everything waiting now, including batches waiting out a retry backoff.
 func flush() -> void:
 	_since_flush = 0.0
+	var size: int = _context.settings.marker_batch_size
 	while not _pending.is_empty():
-		var batch := _pending.slice(0, Constants.MARKER_BATCH_SIZE)
-		_pending = _pending.slice(Constants.MARKER_BATCH_SIZE)
+		var batch := _pending.slice(0, size)
+		_pending = _pending.slice(size)
 		_send_batch(batch, 1)
 
 
 ## Number of markers not yet confirmed by the backend (pending, retrying or in flight).
 func buffered_count() -> int:
-	var count := _pending.size()
-	for entry in _retries:
-		count += entry["markers"].size()
-	for id in _in_flight:
-		count += _in_flight[id].size()
-	return count
+	return _unsent_count() + _in_flight_count()
 
 
 # --- Internal (called by the Gamebeast autoload) -----------------------------------------------
@@ -104,89 +111,129 @@ func buffered_count() -> int:
 func _tick(delta: float) -> void:
 	if _stopped:
 		return
+	if _parked_frame >= 0 and Engine.get_process_frames() > _parked_frame + 2:
+		# Still running after a quit request (the game cancelled it): take the markers back.
+		_claim_parked()
 	_tick_retries(delta)
 	if _pending.is_empty():
 		_since_flush = 0.0
 		return
 	_since_flush += delta
-	if _since_flush >= Constants.MARKER_FLUSH_INTERVAL_SEC:
+	if _since_flush >= _context.settings.marker_flush_interval_sec:
 		flush()
 
 
-## Write every unconfirmed marker to disk (quit, backgrounding, page hide).
-func _persist() -> void:
-	var snapshot := _snapshot()
-	if snapshot.is_empty():
-		_context.storage.delete(_file_name())
-	else:
-		_context.storage.write_json(_file_name(), snapshot)
+## Quit or backgrounding: move every unsent marker to disk. In-flight requests carry on.
+func _park() -> void:
+	var unsent := _take_unsent()
+	if unsent.is_empty():
+		return
+	_write_parked(unsent)
+	_parked_frame = Engine.get_process_frames()
 
 
-## Persist, then send everything now, skipping retry backoff.
-func _persist_and_flush() -> void:
-	_persist()
+## Back in the foreground (or a cancelled quit): claim parked markers and send them.
+func _resume() -> void:
+	_claim_parked()
 	_flush_retries_now()
 	flush()
 
 
-## Web page hide: persist, then hand everything to keepalive fetches, which outlive the page.
-## The markers stay persisted, so if a keepalive request fails they replay on the next visit.
-func _persist_and_flush_keepalive(post: Callable) -> void:
-	_persist()
-	var batches: Array = []
-	for entry in _retries:
-		batches.append(entry["markers"])
-	_retries.clear()
-	while not _pending.is_empty():
-		batches.append(_pending.slice(0, Constants.MARKER_BATCH_SIZE))
-		_pending = _pending.slice(Constants.MARKER_BATCH_SIZE)
-	for batch in batches:
-		var request: Dictionary = _context.api.markers_request(batch)
-		post.call(request["url"], request["headers"], request["body"])
+## Web page hide: hand what fits in the browser's keepalive budget to keepalive fetches (they
+## outlive the page) and park the rest. Nothing is sent while offline.
+func _drain_for_unload(post: Callable, online: bool) -> void:
+	var unsent := _take_unsent()
+	var leftover: Array = []
+	if online:
+		var remaining := Constants.KEEPALIVE_MAX_BYTES
+		var batch: Array = []
+		var batch_bytes := 0
+		for marker in unsent:
+			var cost := JsonCodec.stringify(marker).to_utf8_buffer().size() + 1
+			if batch.is_empty():
+				cost += BATCH_WRAPPER_BYTES
+			if not leftover.is_empty() or batch_bytes + cost > remaining:
+				leftover.append(marker)
+				continue
+			batch.append(marker)
+			batch_bytes += cost
+			if batch.size() >= _context.settings.marker_batch_size:
+				remaining -= _post_keepalive(post, batch)
+				batch = []
+				batch_bytes = 0
+		if not batch.is_empty():
+			_post_keepalive(post, batch)
+	else:
+		leftover = unsent
+	if not leftover.is_empty():
+		_write_parked(leftover)
+		_parked_frame = -1  # The page stays alive while hidden; claimed back when visible.
 
 
 func _shutdown() -> void:
-	_persist_and_flush()
+	_flush_retries_now()
+	flush()
 	_stopped = true
+
+
+func _post_keepalive(post: Callable, batch: Array) -> int:
+	var request: Dictionary = _context.api.markers_request(batch)
+	post.call(request["url"], request["headers"], request["body"])
+	return request["body"].to_utf8_buffer().size()
 
 
 func _file_name() -> String:
 	return "markers_%s.json" % Storage.safe_name(_context.environment_alias)
 
 
-func _snapshot() -> Array:
-	var snapshot: Array = []
-	for id in _in_flight:
-		snapshot.append_array(_in_flight[id])
+## Remove and return everything not yet handed to the network.
+func _take_unsent() -> Array:
+	var unsent: Array = []
 	for entry in _retries:
-		snapshot.append_array(entry["markers"])
-	snapshot.append_array(_pending)
-	return snapshot
+		unsent.append_array(entry["markers"])
+	unsent.append_array(_pending)
+	_retries.clear()
+	_pending = []
+	return unsent
 
 
-func _restore_persisted() -> void:
+## Append to the parked file (an earlier park may not have been claimed yet), keeping the newest.
+func _write_parked(markers: Array) -> void:
 	var stored: Variant = _context.storage.read_json(_file_name())
-	_context.storage.delete(_file_name())
-	if not (stored is Array) or stored.is_empty():
-		return
-	var markers: Array = stored.filter(func(m): return m is Dictionary and m.has("eventName"))
-	if markers.size() > Constants.MARKER_MAX_BUFFERED:
-		Log.warn(
+	var merged: Array = _valid_markers(stored) + markers
+	if merged.size() > Constants.MARKER_MAX_BUFFERED:
+		Log.error(
 			(
-				"Dropping %d persisted marker(s) over the buffer cap."
-				% (markers.size() - Constants.MARKER_MAX_BUFFERED)
+				"Marker storage full; dropped the %d oldest marker(s)."
+				% (merged.size() - Constants.MARKER_MAX_BUFFERED)
 			)
 		)
-		markers = markers.slice(markers.size() - Constants.MARKER_MAX_BUFFERED)
-	for start in range(0, markers.size(), Constants.MARKER_BATCH_SIZE):
-		_retries.append(
-			{
-				"markers": markers.slice(start, start + Constants.MARKER_BATCH_SIZE),
-				"attempt": 1,
-				"wait": 0.0
-			}
-		)
-	Log.info("Restored %d persisted marker(s) from a previous session." % markers.size())
+		merged = merged.slice(merged.size() - Constants.MARKER_MAX_BUFFERED)
+	if not _context.storage.write_json(_file_name(), merged):
+		Log.error("Could not save %d unsent marker(s); they are lost." % markers.size())
+
+
+## Read and clear the parked file, queueing its markers to send on the next tick.
+func _claim_parked() -> void:
+	_parked_frame = -1
+	var stored: Variant = _context.storage.read_json(_file_name())
+	if stored == null:
+		return
+	_context.storage.delete(_file_name())
+	var markers := _valid_markers(stored)
+	if markers.is_empty():
+		return
+	var size: int = _context.settings.marker_batch_size
+	for start in range(0, markers.size(), size):
+		_retries.append({"markers": markers.slice(start, start + size), "attempt": 1, "wait": 0.0})
+	_enforce_cap()
+	Log.info("Restored %d saved marker(s)." % markers.size())
+
+
+static func _valid_markers(stored: Variant) -> Array:
+	if not (stored is Array):
+		return []
+	return stored.filter(func(m): return m is Dictionary and m.has("eventName"))
 
 
 func _send_batch(markers: Array, attempt: int) -> void:
@@ -197,8 +244,7 @@ func _send_batch(markers: Array, attempt: int) -> void:
 	_in_flight.erase(batch_id)
 	if response.is_success():
 		Log.info("Sent %d marker(s)." % markers.size())
-		if buffered_count() == 0:
-			_context.storage.delete(_file_name())
+		_log_rejections(response, markers.size())
 		return
 	if _is_permanent_rejection(response):
 		Log.error(
@@ -234,6 +280,23 @@ func _send_batch(markers: Array, attempt: int) -> void:
 	_enforce_cap()
 
 
+## A 200 can still carry per-marker rejections (invalid shape, subscription limits).
+static func _log_rejections(response: HttpResponse, sent: int) -> void:
+	var parsed: Variant = JsonCodec.parse(response.text())
+	if not (parsed is Dictionary) or int(parsed.get("rejectedMarkersCount", 0)) <= 0:
+		return
+	var reasons := PackedStringArray()
+	for rejected in parsed.get("rejectedMarkers", []).slice(0, 5):
+		if rejected is Dictionary:
+			reasons.append(str(rejected.get("reason", "unknown")))
+	Log.warn(
+		(
+			"%d of %d marker(s) were rejected: %s"
+			% [int(parsed["rejectedMarkersCount"]), sent, "; ".join(reasons)]
+		)
+	)
+
+
 static func _is_permanent_rejection(response: HttpResponse) -> bool:
 	if response.transport_error != "":
 		return false
@@ -266,9 +329,23 @@ func _flush_retries_now() -> void:
 		_send_batch(entry["markers"], entry["attempt"])
 
 
-## Bound memory during long outages: drop the oldest buffered markers first.
+func _unsent_count() -> int:
+	var count := _pending.size()
+	for entry in _retries:
+		count += entry["markers"].size()
+	return count
+
+
+func _in_flight_count() -> int:
+	var count := 0
+	for id in _in_flight:
+		count += _in_flight[id].size()
+	return count
+
+
+## Bound memory during long outages: drop the oldest unsent markers first.
 func _enforce_cap() -> void:
-	var over := buffered_count() - Constants.MARKER_MAX_BUFFERED
+	var over := _unsent_count() - Constants.MARKER_MAX_BUFFERED
 	if over <= 0:
 		return
 	var dropped := 0

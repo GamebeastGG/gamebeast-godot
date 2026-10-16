@@ -41,17 +41,35 @@ func test_marker_shape_and_headers() -> void:
 	assert_eq(sent[0].headers["serverid"], context.session_id, "serverid")
 
 
-func test_batches_of_ten_flush_immediately() -> void:
+func test_full_batch_flushes_immediately_then_interval() -> void:
 	var markers := GamebeastMarkers.new(_context())
-	for i in range(25):
+	for i in range(250):
 		markers.send_marker("e", {"i": i})
 	await settle()
-	assert_eq(_marker_requests().size(), 2, "two full batches sent")
-	assert_eq(markers.buffered_count(), 5, "five waiting")
+	assert_eq(_marker_requests().size(), 2, "two full batches of 100 sent")
+	assert_eq(_marker_requests()[0].json["markers"].size(), 100, "default batch size 100")
+	assert_eq(markers.buffered_count(), 50, "fifty waiting")
 	markers._tick(10.0)
 	await settle()
 	assert_eq(_marker_requests().size(), 3, "interval flush")
-	assert_eq(_marker_requests()[2].json["markers"].size(), 5, "remainder batch")
+	assert_eq(_marker_requests()[2].json["markers"].size(), 50, "remainder batch")
+
+
+func test_batch_size_and_interval_are_configurable() -> void:
+	var options := GamebeastOptions.with_api_key("key")
+	options.marker_batch_size = 3
+	options.marker_flush_interval_sec = 30.0
+	var markers := GamebeastMarkers.new(Context.new(options, "development", transport, storage))
+	for i in range(4):
+		markers.send_marker("e")
+	await settle()
+	assert_eq(_marker_requests().size(), 1, "batch of 3 sent")
+	markers._tick(29.0)
+	await settle()
+	assert_eq(_marker_requests().size(), 1, "custom interval not reached")
+	markers._tick(1.5)
+	await settle()
+	assert_eq(_marker_requests().size(), 2, "custom interval flush")
 
 
 func test_send_position_maps_2d_to_xz() -> void:
@@ -119,40 +137,70 @@ func test_gives_up_after_five_attempts() -> void:
 	assert_eq(markers.buffered_count(), 0, "dropped after max attempts")
 
 
-func test_persist_and_replay_next_launch() -> void:
+func test_park_and_replay_next_launch_without_resending_in_flight() -> void:
 	transport.manual = true
 	var context := _context()
 	var markers := GamebeastMarkers.new(context)
 	markers.send_marker("a")
 	markers.send_marker("b")
-	markers.flush()  # in flight, never answered (the game is killed)
+	markers.flush()  # in flight, never answered (the game is killed); may have arrived
 	markers.send_marker("c")
-	markers._persist()
-	var ids := [
-		transport.requests[0].json["markers"][0]["markerId"],
-		transport.requests[0].json["markers"][1]["markerId"],
-	]
+	markers._park()
+	assert_eq(markers.buffered_count(), 2, "only the in-flight batch stays in memory")
 
 	var next_transport := FakeTransport.new()
 	var next_context := Context.new(
 		GamebeastOptions.with_api_key("key"), "development", next_transport, storage
 	)
 	var restored := GamebeastMarkers.new(next_context)
-	assert_eq(restored.buffered_count(), 3, "restored in-flight and pending markers")
+	assert_eq(restored.buffered_count(), 1, "restored only the unsent marker")
+	assert_eq(storage.read_json("markers_development.json"), null, "claimed: file cleared")
 	restored._tick(0.1)
 	await settle()
 	var sent: Array = next_transport.requests_to("/sdk/v1/markers")[0].json["markers"]
-	assert_eq(sent.map(func(m): return m["eventName"]), ["a", "b", "c"], "replayed in order")
-	assert_eq(sent[0]["markerId"], ids[0], "original marker id kept")
+	assert_eq(sent.map(func(m): return m["eventName"]), ["c"], "in-flight markers not resent")
 	assert_eq(sent[0]["sessionId"], context.session_id, "original session kept")
-	assert_eq(storage.read_json("markers_development.json"), null, "disk copy cleared after send")
 
 
-func test_persist_files_are_per_environment() -> void:
-	transport.manual = true
+func test_park_then_resume_sends_once() -> void:
+	var markers := GamebeastMarkers.new(_context())
+	markers.send_marker("a")
+	markers._park()
+	assert_eq(markers.buffered_count(), 0, "moved to disk")
+	markers._resume()
+	await settle()
+	markers._park()
+	markers._resume()
+	await settle()
+	assert_eq(_marker_requests().size(), 1, "sent exactly once")
+	assert_eq(storage.read_json("markers_development.json"), null, "no disk copy left")
+
+
+func test_cancelled_quit_claims_parked_markers() -> void:
+	var markers := GamebeastMarkers.new(_context())
+	markers.send_marker("a")
+	markers._park()
+	for i in range(4):
+		await tree.process_frame
+		markers._tick(0.016)
+	await settle()
+	assert_eq(_marker_requests().size(), 1, "still running after quit request: sent")
+
+
+func test_parks_append_to_unclaimed_file() -> void:
+	var markers := GamebeastMarkers.new(_context())
+	markers.send_marker("a")
+	markers._park()
+	markers.send_marker("b")
+	markers._park()
+	var stored: Array = storage.read_json("markers_development.json")
+	assert_eq(stored.map(func(m): return m["eventName"]), ["a", "b"], "both kept")
+
+
+func test_park_files_are_per_environment() -> void:
 	var markers := GamebeastMarkers.new(_context("production"))
 	markers.send_marker("x")
-	markers._persist()
+	markers._park()
 	assert_true(storage.read_json("markers_production.json") is Array, "production file")
 	assert_eq(storage.read_json("markers_development.json"), null, "no development file")
 
@@ -166,19 +214,44 @@ func test_buffer_cap_drops_oldest() -> void:
 	assert_true(markers.buffered_count() <= 500, "capped at 500, got %d" % markers.buffered_count())
 
 
-func test_keepalive_flush_hands_off_everything() -> void:
+func test_keepalive_drain_sends_without_persisting() -> void:
 	var markers := GamebeastMarkers.new(_context())
-	for i in range(12):
-		markers._pending.append({"eventName": "e", "markerId": Uuid.v4()})
+	for i in range(120):
+		markers.send_marker("e")
+	await settle()  # one batch of 100 already sent normally
 	var posts: Array = []
-	markers._persist_and_flush_keepalive(
-		func(url, headers, body): posts.append([url, headers, body])
-	)
-	assert_eq(posts.size(), 2, "two keepalive batches")
+	markers._drain_for_unload(func(url, headers, body): posts.append([url, headers, body]), true)
+	assert_eq(posts.size(), 1, "one keepalive batch")
 	assert_true(posts[0][0].ends_with("/sdk/v1/markers"), "markers url")
 	assert_eq(posts[0][1]["isstudio"], "true", "v1 headers")
-	assert_eq(JSON.parse_string(posts[1][2])["markers"].size(), 2, "body is a marker batch")
-	assert_true(storage.read_json("markers_development.json") is Array, "persisted as a fallback")
+	assert_eq(JSON.parse_string(posts[0][2])["markers"].size(), 20, "the waiting markers")
+	assert_eq(storage.read_json("markers_development.json"), null, "handed off, not also saved")
+
+
+func test_keepalive_drain_respects_byte_budget() -> void:
+	var markers := GamebeastMarkers.new(_context())
+	var big := "x".repeat(1000)
+	for i in range(200):
+		markers._pending.append({"eventName": "e", "markerId": Uuid.v4(), "p": big})
+	var posts: Array = []
+	markers._drain_for_unload(func(_u, _h, body): posts.append(body), true)
+	var total := 0
+	var sent := 0
+	for body in posts:
+		total += body.to_utf8_buffer().size()
+		sent += JSON.parse_string(body)["markers"].size()
+	assert_true(total <= 60000, "under the keepalive budget, got %d" % total)
+	var stored: Array = storage.read_json("markers_development.json")
+	assert_eq(sent + stored.size(), 200, "the rest are saved for later")
+
+
+func test_keepalive_drain_offline_saves_everything() -> void:
+	var markers := GamebeastMarkers.new(_context())
+	markers.send_marker("a")
+	var posts: Array = []
+	markers._drain_for_unload(func(_u, _h, body): posts.append(body), false)
+	assert_eq(posts.size(), 0, "nothing sent offline")
+	assert_eq(storage.read_json("markers_development.json").size(), 1, "saved")
 
 
 func test_attribution_is_stamped_on_markers() -> void:

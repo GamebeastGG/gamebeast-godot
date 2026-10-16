@@ -1,6 +1,7 @@
 ## Prefixed console logging. Info lines only print when debug logging is enabled.
 
 static var debug_enabled := false
+static var warnings_enabled := true
 ## Suppresses warnings and errors (test runner only).
 static var silenced := false
 
@@ -11,7 +12,7 @@ static func info(message: String) -> void:
 
 
 static func warn(message: String) -> void:
-	if not silenced:
+	if warnings_enabled and not silenced:
 		push_warning("[Gamebeast] " + message)
 
 

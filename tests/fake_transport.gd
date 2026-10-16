@@ -23,6 +23,10 @@ var manual := false
 ## Responses for automatic mode, consumed in order. Falls back to `default_response`.
 var queued: Array = []
 var default_response: Callable = func(_p): return HttpResponse.of(200, "{}")
+## URL substring -> Callable(pending) or HttpResponse. Checked first, in manual mode too, so a
+## background poll never takes a response queued for something else. /status answers 304 unless
+## a test replaces it.
+var routes: Dictionary = {"/sdk/v2/status": HttpResponse.of(304, "")}
 var _waiting: Array = []
 
 
@@ -36,6 +40,10 @@ func request(
 	pending.body = body.get_string_from_utf8()
 	pending.json = JsonCodec.parse(pending.body)
 	requests.append(pending)
+	for path in routes:
+		if url.contains(path):
+			var route: Variant = routes[path]
+			return route.call(pending) if route is Callable else route
 	if manual:
 		_waiting.append(pending)
 		return await pending.resolved

@@ -18,6 +18,14 @@ func _context() -> Context:
 	return Context.new(options, "development", transport, storage)
 
 
+## Status polling off: names come from /experiments/active.
+func _wire(context: Context) -> Array:
+	var experiments := GamebeastExperiments.new(context)
+	var configs := GamebeastConfigs.new(context)
+	configs.assignments_reporter = experiments._report
+	return [experiments, configs]
+
+
 func _catalog() -> HttpResponse:
 	return (
 		FakeTransport
@@ -143,3 +151,27 @@ func test_identity_change_clears_assignments() -> void:
 	experiments._on_identity_changed()
 	await settle()
 	assert_eq(experiments.get_assignments().size(), 0, "cleared for new player")
+
+
+func test_names_from_status_without_catalog_fetch() -> void:
+	var context := _context()
+	var experiments := GamebeastExperiments.new(context)
+	experiments.catalog_from_status = true
+	var events: Array = []
+	experiments.assignments_changed.connect(func(list): events.append(list))
+	experiments._report("Game", [_assignment(7, 21)])
+	await settle()
+	assert_eq(experiments.get_assignments()[0].experiment_name, "", "unknown until a snapshot")
+	experiments._apply_catalog(
+		[{"id": 7, "name": "Speed test", "groups": [{"id": 21, "label": "Fast"}]}]
+	)
+	await settle()
+	assert_eq(experiments.get_assignments()[0].experiment_name, "Speed test", "name from status")
+	assert_eq(experiments.get_assignments()[0].group_label, "Fast", "label from status")
+	assert_eq(events.size(), 2, "emitted again once names arrived")
+	experiments._apply_catalog(
+		[{"id": 7, "name": "Speed test", "groups": [{"id": 21, "label": "Fast"}]}]
+	)
+	await settle()
+	assert_eq(events.size(), 2, "unchanged catalog: no emit")
+	assert_eq(transport.requests_to("/sdk/v2/experiments/active").size(), 0, "no catalog fetch")

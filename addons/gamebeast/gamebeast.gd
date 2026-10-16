@@ -29,6 +29,16 @@ const Storage := preload("internal/storage.gd")
 const WebBridge := preload("internal/web_bridge.gd")
 
 const SDK_VERSION := Constants.SDK_VERSION
+## Settings [method update_settings] accepts.
+const RUNTIME_SETTINGS: Array[String] = [
+	"marker_flush_interval_sec",
+	"marker_batch_size",
+	"status_poll_interval_sec",
+	"config_refresh_interval_sec",
+	"session_timeout_sec",
+	"warnings_enabled",
+	"debug_logging",
+]
 
 ## Analytics markers. Null until setup().
 var markers: GamebeastMarkers:
@@ -80,8 +90,9 @@ func _notification(what: int) -> void:
 		return
 	match what:
 		NOTIFICATION_WM_CLOSE_REQUEST:
-			# The game may quit right after this; sends can't finish, so the disk copy matters.
-			_markers._persist_and_flush()
+			# The game may quit right after this and a send couldn't finish, so unsent markers go
+			# to disk for the next launch (taken back if the game cancels the quit).
+			_markers._park()
 		NOTIFICATION_APPLICATION_PAUSED:
 			_on_backgrounded()
 		NOTIFICATION_APPLICATION_RESUMED:
@@ -137,8 +148,64 @@ func reset_identity() -> void:
 		_set_identity("")
 
 
-## Flush pending data (markers are persisted to disk first) and tear the SDK down. setup() may be
-## called again afterwards.
+## Replace the custom player properties sent as targeting context (see
+## [member GamebeastOptions.user_properties]). Configurations, and so experiment assignments,
+## are re-evaluated right away, so a targeted experiment can enroll the player this session.
+func set_user_properties(properties: Dictionary) -> void:
+	if not _require_initialized("set_user_properties"):
+		return
+	if properties == _context.options.user_properties:
+		return
+	_context.options.user_properties = properties.duplicate(true)
+	_configs.refresh()
+
+
+## Set (or with null, remove) one custom player property. See [method set_user_properties].
+func set_user_property(key: String, value: Variant) -> void:
+	if not _require_initialized("set_user_property"):
+		return
+	var properties := _context.options.user_properties.duplicate(true)
+	if value == null:
+		properties.erase(key)
+	else:
+		properties[key] = value
+	set_user_properties(properties)
+
+
+## The custom player properties currently sent as targeting context.
+func get_user_properties() -> Dictionary:
+	return _context.options.user_properties.duplicate(true) if _context != null else {}
+
+
+## Change runtime settings without re-initializing. Accepts a Dictionary with any of
+## marker_flush_interval_sec, marker_batch_size, status_poll_interval_sec,
+## config_refresh_interval_sec, session_timeout_sec, warnings_enabled and debug_logging. Omitted
+## ones keep their value. The API key, environment and URL are fixed at setup (data already loaded
+## is keyed to them).
+func update_settings(settings: Dictionary) -> void:
+	if not _require_initialized("update_settings"):
+		return
+	for key in settings:
+		var name := str(key)
+		if not name in RUNTIME_SETTINGS:
+			(
+				Log
+				. warn(
+					(
+						"update_settings: '%s' can't be changed at runtime (use shutdown() and setup())."
+						% name
+					)
+				)
+			)
+			continue
+		_context.options.set(name, settings[key])
+	Log.warnings_enabled = _context.options.warnings_enabled
+	Log.debug_enabled = _context.options.debug_logging
+	_context.resolve_settings()
+	_experiments.catalog_from_status = _context.settings.status_poll_interval_sec > 0.0
+
+
+## Send pending markers and tear the SDK down. setup() may be called again afterwards.
 func shutdown() -> void:
 	if _context == null:
 		return
@@ -169,7 +236,6 @@ func _auto_initialize() -> void:
 	if options.api_key == "":
 		Log.warn("Auto-initialize is on but gamebeast/general/api_key is empty; skipping setup.")
 		return
-	Log.debug_enabled = options.debug_logging
 	Log.info("Auto-initializing from Project Settings.")
 	_setup_internal(options, null, null)
 
@@ -185,23 +251,21 @@ func _setup_internal(options: GamebeastOptions, transport: Variant, storage: Sto
 		Log.error("setup() requires an API key.")
 		return
 	Log.debug_enabled = options.debug_logging
-	var alias := GbEnvironment.resolve_alias(
-		options.environment, options.custom_environment, GbEnvironment.is_dev_runtime()
-	)
-	if not GbEnvironment.supported_by_v1(alias):
-		# TODO(post-release): custom environments.
-		(
-			Log
-			. warn(
+	Log.warnings_enabled = options.warnings_enabled
+	var alias := GbEnvironment.resolve_alias(options.environment, GbEnvironment.is_dev_runtime())
+	if not GbEnvironment.is_supported(alias):
+		# TODO(post-release): custom environments. Pass the alias through once they ship.
+		var fallback := GbEnvironment.runtime_default(GbEnvironment.is_dev_runtime())
+		Log.warn(
+			(
 				(
-					(
-						"Environment '%s': configurations and experiments use it, but markers and cohorts "
-						+ "can only target production or development and will be sent to development."
-					)
-					% alias
+					"Environment '%s' isn't supported: custom environments are coming soon. Set "
+					+ "production or development, or leave it blank to resolve it. Using %s."
 				)
+				% [options.environment, fallback]
 			)
 		)
+		alias = fallback
 	_transport = transport if transport != null else HttpTransport.new(self)
 	_context = Context.new(
 		options, alias, _transport, storage if storage != null else Storage.new()
@@ -210,6 +274,8 @@ func _setup_internal(options: GamebeastOptions, transport: Variant, storage: Sto
 	_experiments = GamebeastExperiments.new(_context)
 	_configs = GamebeastConfigs.new(_context)
 	_configs.assignments_reporter = _experiments._report
+	_configs.catalog_reporter = _experiments._apply_catalog
+	_experiments.catalog_from_status = _context.settings.status_poll_interval_sec > 0.0
 	_cohorts = GamebeastCohorts.new(_context)
 	_attach_web()
 	Log.info(
@@ -229,6 +295,7 @@ func _attach_web() -> void:
 	_web.attach()
 	_web.hidden.connect(_on_web_hidden)
 	_web.visible.connect(_on_foregrounded)
+	_web.online.connect(_on_web_online)
 	_context.attribution = Attribution.parse(_web.location_href())
 
 
@@ -238,13 +305,20 @@ func _on_web_hidden() -> void:
 	if not _backgrounded:
 		_backgrounded = true
 		_backgrounded_at = Time.get_ticks_msec() / 1000.0
-	_markers._persist_and_flush_keepalive(_web.keepalive_post)
+	_markers._drain_for_unload(_web.keepalive_post, _web.is_online())
+
+
+## Markers saved while offline go out once the browser is back online.
+func _on_web_online() -> void:
+	if _context != null:
+		_markers._resume()
 
 
 func _on_backgrounded() -> void:
 	_backgrounded = true
 	_backgrounded_at = Time.get_ticks_msec() / 1000.0
-	_markers._persist_and_flush()
+	# Mobile apps can be killed while paused; markers wait on disk and go out on resume.
+	_markers._park()
 
 
 func _on_foregrounded() -> void:
@@ -257,6 +331,7 @@ func _on_foregrounded() -> void:
 			_context.rotate_session()
 			Log.info("Session rotated after %ds in the background." % int(away))
 	_backgrounded = false
+	_markers._resume()
 	_configs._on_resumed()
 
 

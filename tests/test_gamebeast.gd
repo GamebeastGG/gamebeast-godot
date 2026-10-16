@@ -31,12 +31,12 @@ func _setup(options: Variant) -> void:
 	sdk._setup_internal(sdk._to_options(options), transport, fresh_storage())
 
 
-func test_custom_environment_falls_back_to_auto() -> void:
+func test_custom_environment_resolves_as_unset() -> void:
 	# TODO(post-release): custom environments. Expect "staging" once they ship.
 	_setup({"api_key": "key", "environment": "staging"})
 	assert_true(sdk.is_initialized(), "still initializes")
-	var auto := GbEnvironment.resolve_alias("auto", GbEnvironment.is_dev_runtime())
-	assert_eq(sdk.get_environment(), auto, "falls back to auto")
+	var resolved := GbEnvironment.runtime_default(GbEnvironment.is_dev_runtime())
+	assert_eq(sdk.get_environment(), resolved, "resolved as if unset")
 
 
 func test_setup_from_dictionary() -> void:

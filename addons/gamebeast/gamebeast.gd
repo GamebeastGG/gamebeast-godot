@@ -255,19 +255,14 @@ func _setup_internal(options: GamebeastOptions, transport: Variant, storage: Sto
 	var alias := GbEnvironment.resolve_alias(options.environment, GbEnvironment.is_dev_runtime())
 	if not GbEnvironment.is_supported(alias):
 		# TODO(post-release): custom environments. Pass the alias through once they ship.
-		var fallback := GbEnvironment.resolve_alias(
-			GbEnvironment.AUTO, GbEnvironment.is_dev_runtime()
-		)
-		(
-			Log
-			. warn(
+		var fallback := GbEnvironment.runtime_default(GbEnvironment.is_dev_runtime())
+		Log.warn(
+			(
 				(
-					(
-						"Environment '%s' isn't supported: custom environments are coming soon. Use auto, "
-						+ "production or development. Using %s."
-					)
-					% [options.environment, fallback]
+					"Environment '%s' isn't supported: custom environments are coming soon. Set "
+					+ "production or development, or leave it blank to resolve it. Using %s."
 				)
+				% [options.environment, fallback]
 			)
 		)
 		alias = fallback

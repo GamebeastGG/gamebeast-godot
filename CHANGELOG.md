@@ -5,7 +5,7 @@
 First release.
 
 - `Gamebeast` autoload with `setup`, `identify`, `reset_identity`, `set_user_properties`, `update_settings` and `shutdown`. It can also set itself up from Project Settings.
-- One `environment` setting: `auto` (development in the editor and debug builds, production in release) `production` or `development`. Custom environments are coming soon; other values warn and fall back to `auto`.
+- One `environment` setting: `production` or `development`, or blank to resolve it (development in the editor and debug builds, production in release). Custom environments are coming soon; other values warn and are resolved as if blank.
 - Markers: batching (100 per batch; every 2 s in the editor and debug builds, 10 s in release, both configurable), retries with backoff and `retry-after`, saving unsent markers to disk on quit or backgrounding without double-sending, Godot type conversion, and a `send_position` helper for heatmaps.
 - Remote configurations: typed getters, `observe` / `on_changed` / `on_ready`, change detection through `/sdk/v2/status` polling (re-evaluating only what changed) and an on-device cache.
 - Experiments: assignment list with names and group labels from the status snapshot.

@@ -1,16 +1,15 @@
-## Environment resolution. One setting: "auto" (the default) resolves to development in the editor
-## and debug exports and to production in release exports; "production" or "development" pins it.
+## Environment resolution. One setting: left blank (the default), the SDK resolves development in
+## the editor and debug exports and production in release exports; "production" or "development"
+## pins it.
 ## Aliases are normalized the way the backend does it (the JS SDK's `normalizeEnvironment`):
 ## "Production" and "production" are the same environment, and "studio" means development.
 ##
 ## TODO(post-release): custom environments. Custom environments are coming soon. Until then any
-## other alias is unsupported: setup warns and falls back to auto. When they ship, pass the alias
-## through to v2 routes; the v1 routes (markers, cohorts) pick the environment from the `isstudio`
-## boolean and can only address production and development.
+## other alias is unsupported: setup warns and resolves as if it were blank. When they ship, pass
+## the alias through to v2 routes; the v1 routes (markers, cohorts) pick the environment from the
+## `isstudio` boolean and can only address production and development.
 
 const Constants := preload("constants.gd")
-
-const AUTO := "auto"
 
 const _SYNONYMS := {"studio": "development"}
 
@@ -28,17 +27,22 @@ static func normalize(input: String) -> String:
 	return _SYNONYMS.get(slug, slug)
 
 
-## The environment alias sent to v2 routes in the `environment` header. Empty or "auto" picks
-## development or production from the runtime. Returns "" for a value that normalizes to nothing
-## (e.g. "!!"); the caller warns and falls back to auto.
+## The environment alias sent to v2 routes in the `environment` header. Blank resolves from the
+## runtime ([method runtime_default]); anything else is normalized. Returns "" for a value that
+## normalizes to nothing (e.g. "!!"), which [method is_supported] rejects.
 static func resolve_alias(environment: String, is_dev_runtime: bool) -> String:
-	var alias := normalize(environment)
-	if environment.strip_edges() == "" or alias == AUTO:
-		return Constants.DEVELOPMENT if is_dev_runtime else Constants.PRODUCTION
-	return alias
+	if environment.strip_edges() == "":
+		return runtime_default(is_dev_runtime)
+	return normalize(environment)
 
 
-## True when running in the editor or a debug export: `Auto` resolves to development there.
+## The environment used when none is specified: development in the editor and debug exports,
+## production in release exports.
+static func runtime_default(is_dev_runtime: bool) -> String:
+	return Constants.DEVELOPMENT if is_dev_runtime else Constants.PRODUCTION
+
+
+## True when running in the editor or a debug export, where a blank environment is development.
 static func is_dev_runtime() -> bool:
 	return OS.has_feature("editor") or OS.is_debug_build()
 

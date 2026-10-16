@@ -21,15 +21,15 @@ const API_URL := PREFIX + "advanced/api_url"
 static func definitions() -> Array:
 	return [
 		[API_KEY, "", TYPE_STRING, PROPERTY_HINT_NONE, "", true],
-		# "auto", "production" or "development".
+		# "production" or "development"; blank resolves from the runtime.
 		# TODO(post-release): custom environments. Custom environments are coming soon; until
-		# then any other value warns at setup and falls back to auto.
+		# then any other value warns at setup and is resolved as if blank.
 		[
 			ENVIRONMENT,
-			"auto",
+			"",
 			TYPE_STRING,
-			PROPERTY_HINT_ENUM_SUGGESTION,
-			"auto,production,development",
+			PROPERTY_HINT_PLACEHOLDER_TEXT,
+			"Blank: development in editor/debug, production in release",
 			true
 		],
 		[
@@ -100,7 +100,7 @@ static func auto_initialize_enabled() -> bool:
 static func to_options() -> GamebeastOptions:
 	var options := GamebeastOptions.new()
 	options.api_key = str(ProjectSettings.get_setting(API_KEY, "")).strip_edges()
-	options.environment = str(ProjectSettings.get_setting(ENVIRONMENT, "auto"))
+	options.environment = str(ProjectSettings.get_setting(ENVIRONMENT, ""))
 	options.configurations = PackedStringArray(
 		ProjectSettings.get_setting(CONFIGURATIONS, PackedStringArray())
 	)

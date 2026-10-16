@@ -23,10 +23,9 @@ func test_uuid_is_dashed_v4() -> void:
 
 
 func test_environment_resolution() -> void:
-	assert_eq(GbEnvironment.resolve_alias("auto", true), "development", "auto in editor/debug")
-	assert_eq(GbEnvironment.resolve_alias("auto", false), "production", "auto in release")
-	assert_eq(GbEnvironment.resolve_alias("", false), "production", "empty is auto")
-	assert_eq(GbEnvironment.resolve_alias("  ", true), "development", "blank is auto")
+	assert_eq(GbEnvironment.resolve_alias("", true), "development", "unset in editor/debug")
+	assert_eq(GbEnvironment.resolve_alias("", false), "production", "unset in release")
+	assert_eq(GbEnvironment.resolve_alias("  ", true), "development", "blank is unset")
 	assert_eq(GbEnvironment.resolve_alias("production", true), "production", "explicit in editor")
 	assert_eq(GbEnvironment.resolve_alias("development", false), "development", "explicit dev")
 	assert_eq(GbEnvironment.resolve_alias("  Staging ", false), "staging", "custom, normalized")
